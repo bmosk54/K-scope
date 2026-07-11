@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 .DS_Store
 artifacts/
+.ipynb_checkpoints/
+*.npz
+*.npy
+*.pt
+s3inline.json

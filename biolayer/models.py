@@ -2,8 +2,8 @@
 
 Both backends share the same contract:
     embed(images: list[PIL.Image]) -> np.ndarray of shape (len(images), dim)
-so extract.py batches identically regardless of which FM is loaded. CPU-safe:
-everything runs under torch.inference_mode() on the default device (cpu here).
+so extract.py batches identically regardless of which FM is loaded. Everything
+runs under torch.inference_mode() on the auto-detected device.
 """
 import os
 
@@ -12,7 +12,8 @@ import torch
 
 from . import config
 
-# c5.4xlarge is CPU-only; use all vCPUs for inference throughput.
+# This instance has an NVIDIA A10G GPU -> DEVICE=cuda (H-optimus-0 ViT-g/14 needs
+# it in practice). Falls back to CPU (all vCPUs) if no GPU is present.
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if DEVICE.type == "cpu":
     torch.set_num_threads(os.cpu_count() or 1)
