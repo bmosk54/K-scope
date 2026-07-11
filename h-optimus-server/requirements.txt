@@ -1,0 +1,10 @@
+torch==2.4.1
+torchvision==0.19.1
+timm==1.0.9
+huggingface_hub==0.25.1
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+pillow==10.4.0
+pydantic==2.9.2
+mcp==1.1.2
