@@ -13,8 +13,22 @@ from ..causal import attribution, battery, confound, intervene
 from ..causal import certify as certify_mod
 from ..causal import probe as _probe
 from ..data import loader
+from ..dynamic import certify_answer as _certify_answer
 
 DEFAULT_DISTRACTOR = ("STR", "MUS")
+
+
+def certify_answer(prompt, answer, track="phikon", split="train", n_null=200, fast=False):
+    """Dynamic, answer-bound certification of a free-form K-Pro answer.
+
+    Decomposes the answer into atomic concept-claims, certifies each against the
+    substrate with the full do()-battery + matched-random null + specificity +
+    confound gate + held-out validation + Holm-Bonferroni correction, and returns
+    numeric per-pillar scores plus a GROUNDED/WEAK/NULL verdict per claim. Claims
+    with no substrate label are returned NOT_CERTIFIABLE, not force-fit.
+    """
+    return _certify_answer(prompt, answer, track=track, split=split,
+                           n_null=n_null, fast=fast)
 
 
 def _resolve(track, model, pos, neg):

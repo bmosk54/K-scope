@@ -36,6 +36,22 @@ def hypothesis(track: str = "phikon", split: str = "train") -> dict:
 
 
 @mcp.tool()
+def certify_answer(prompt: str, answer: str, track: str = "phikon",
+                   split: str = "train", n_null: int = 200, fast: bool = False) -> dict:
+    """Certify a free-form K-Pro answer, claim by claim (dynamic answer-bound probes).
+
+    Decomposes the answer into atomic concept-claims, resolves each to a labeled
+    contrast on the substrate (declining claims with no label as NOT_CERTIFIABLE),
+    and runs the full do()-battery + matched-random null + specificity + confound
+    gate + held-out validation per claim, with Holm-Bonferroni correction across
+    claims. Returns numeric per-pillar scores (necessity/sufficiency/specificity)
+    and a GROUNDED/WEAK/NULL verdict per claim. `fast=True` skips the layer sweep.
+    """
+    return verbs.certify_answer(prompt, answer, track=track, split=split,
+                                n_null=n_null, fast=fast)
+
+
+@mcp.tool()
 def probe(model: str = "phikon_v2", split: str = "train",
           pos: str = "TUM", neg: str = "LYM") -> dict:
     """Derive the concept direction and report linear-probe separability."""
