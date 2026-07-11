@@ -86,9 +86,36 @@ MODELS = {
 # ---------------------------------------------------------------------------
 # Key builders
 # ---------------------------------------------------------------------------
+# All artifact kinds are namespaced per-dataset/per-model so phikon_v2 and
+# h_optimus_0 (and h0_mini) never collide — each gets its own folder:
+#   embeddings/<dataset>/<model>/<split>.npz
+#   directions/<dataset>/<model>/<name>.npz
+#   sae/<dataset>/<model>/<name>.pt
+#   certificates/<dataset>/<model>/<split>_<pos>_vs_<neg>.json
+def model_prefix(kind: str, model_key: str, dataset_slug: str = DATASET_SLUG) -> str:
+    """Per-model folder for an artifact kind, e.g. embeddings/nct_crc_he/phikon_v2."""
+    return f"{PREFIX[kind]}/{dataset_slug}/{model_key}"
+
+
 def embeddings_key(model_key: str, split: str, dataset_slug: str = DATASET_SLUG) -> str:
-    """S3 key for an embeddings .npz, e.g. embeddings/nct_crc_he/phikon_v2/train.npz"""
-    return f"{PREFIX['embeddings']}/{dataset_slug}/{model_key}/{split}.npz"
+    """embeddings/<dataset>/<model>/<split>.npz"""
+    return f"{model_prefix('embeddings', model_key, dataset_slug)}/{split}.npz"
+
+
+def certificate_key(model_key: str, split: str, pos: str, neg: str,
+                    dataset_slug: str = DATASET_SLUG) -> str:
+    """certificates/<dataset>/<model>/<split>_<pos>_vs_<neg>.json"""
+    return f"{model_prefix('certificates', model_key, dataset_slug)}/{split}_{pos}_vs_{neg}.json"
+
+
+def directions_key(model_key: str, name: str, dataset_slug: str = DATASET_SLUG) -> str:
+    """directions/<dataset>/<model>/<name>.npz"""
+    return f"{model_prefix('directions', model_key, dataset_slug)}/{name}.npz"
+
+
+def sae_key(model_key: str, name: str, dataset_slug: str = DATASET_SLUG) -> str:
+    """sae/<dataset>/<model>/<name>.pt"""
+    return f"{model_prefix('sae', model_key, dataset_slug)}/{name}.pt"
 
 
 def resolve_split(split: str) -> str:
