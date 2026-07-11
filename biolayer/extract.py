@@ -17,7 +17,7 @@ import numpy as np
 from PIL import Image
 
 from . import config, s3_utils
-from .models import load_encoder
+from .models import DEVICE, load_encoder
 
 
 def _stratified_stream(hf_split, per_class, seed, shuffle_buffer):
@@ -57,7 +57,7 @@ def extract(model_key, split, per_class, batch_size, seed, shuffle_buffer,
     hf_split = config.resolve_split(split)
     spec = config.MODELS[model_key]
     print(f"[extract] model={model_key} ({spec['hf_id']}) split={split}->{hf_split} "
-          f"per_class={per_class} batch={batch_size} device=cpu")
+          f"per_class={per_class} batch={batch_size} device={DEVICE}")
     if spec["gated"]:
         print(f"[extract] NOTE: {model_key} is GATED — needs `huggingface-cli login` "
               f"+ accepted terms at hf.co/{spec['hf_id']}")
