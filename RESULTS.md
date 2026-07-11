@@ -123,3 +123,33 @@ Evidence cards: `artifacts/certificates/{phikon_v2,h_optimus_0}_train_TUM_vs_LYM
 - **Embeddings not yet in S3.** `train.npz` for both models is local under
   `artifacts/embeddings/...`; the shared-bucket push is blocked on an S3 write permission
   for the SageMaker role (bucket-policy / SCP), not on the pipeline.
+
+---
+
+# Infra update — two separate tracks + multi-layer local/global (2026-07-11)
+
+The pipeline is now split into **two independent tracks** (`biolayer.tracks`), because
+Phikon-v2 and H0 have different objectives, datasets, and depths and should not share
+assumptions:
+
+| Track | Model | Dataset | Objective | Distractor | Layers |
+|---|---|---|---|---|---|
+| `phikon` | Phikon-v2 | NCT-CRC-HE | TUM vs LYM (tumor-immune interface) | STR/MUS | 8 / 16 / 24 |
+| `h0` | H0-mini¹ | NCT-CRC-HE → cell-type² | TUM vs NORM (malignancy) | MUS/ADI | 3 / 7 / 11 |
+
+¹ default `h0_mini` (approval-queued); flip `H0_MODEL_KEY` to `h_optimus_0` to run today.
+² NCT-CRC keeps it runnable; intended divergence = HistoPLUS/CytoSyn cell-type substrate.
+
+**Multi-layer, local + global extraction.** Every tile is now embedded at **3 layers**
+(named `mid_early / mid / readout`), and at each layer we keep **both**:
+- **global** = CLS token — the tile-level readout feature (old `feats` = readout global);
+- **local** = mean patch token — local morphology / texture.
+
+Stored in one `.npz` as `globals (N,3,dim)` + `locals (N,3,dim)` (+ back-compat `feats`).
+Verified on real Phikon-v2 features (transformers `output_hidden_states`) and wired for
+timm `get_intermediate_layers` on the H0 track. This directly powers the **layer-resolved
+rigor curve**: `intervene.layered_curve(model, split, pos, neg, space=…)` runs the
+readout-necessity check per layer, on global *or* local space, each vs a matched-random
+null. (The *live* source-intervention propagation test — the true Hydra/redundancy
+probe — remains `necessity_curve`, track #3.) Exposed over MCP as the `layered` verb and
+folded into every `certify` card's `necessity_layered` field.

@@ -44,39 +44,59 @@ IMAGE_COLUMN = "image"
 LABEL_COLUMN = "label"
 
 # ---------------------------------------------------------------------------
-# Model registry — frozen encoders, CLS-pooled
+# Multi-layer, local + global extraction
+# ---------------------------------------------------------------------------
+# Every encoder is probed at THREE depths, and at each depth we keep BOTH the
+# global (CLS) token and a local (mean patch-token) vector:
+#   global : the tile-level representation the model reads out from (CLS)
+#   local  : the mean of the spatial patch tokens (local morphology / texture)
+# The three depths are named positions so the causal card is model-agnostic:
+LAYER_NAMES = ("mid_early", "mid", "readout")   # ~L/3, ~2L/3, final
+SPACES = ("global", "local")                     # CLS vs mean-patch
+
+# Layer indices are BACKEND-SPECIFIC and stored per model:
+#   transformers -> indices into output_hidden_states (0=embeddings .. n_blocks=final)
+#   timm         -> block indices for get_intermediate_layers (0 .. n_blocks-1)
+
+# ---------------------------------------------------------------------------
+# Model registry — frozen encoders; multi-layer global (CLS) + local (mean patch)
 # ---------------------------------------------------------------------------
 # backend selects the load path in models.py:
-#   "transformers" -> AutoModel, CLS = last_hidden_state[:, 0, :]
-#   "timm"         -> timm.create_model, CLS (+ mean patch) pooling
+#   "transformers" -> AutoModel(output_hidden_states=True)
+#   "timm"         -> timm ViT get_intermediate_layers(return_prefix_tokens=True)
 MODELS = {
     "phikon_v2": {
         "hf_id": "owkin/phikon-v2",
         "backend": "transformers",
         "dim": 1024,
         "gated": False,
-        "pool": "cls",
+        "blocks": 24,                 # ViT-L: 24 transformer blocks
+        # hidden_states indices: 0=emb .. 24=final. ~L/3, ~2L/3, readout:
+        "layers": (8, 16, 24),
     },
     "h_optimus_0": {
         "hf_id": "bioptimus/H-optimus-0",
         "backend": "timm",
-        # Flagship H-optimus-0: ViT-giant/14, CLS embedding = 1536-d.
-        # model(x) returns the pooled (B, 1536) CLS directly.
+        # Flagship H-optimus-0: ViT-giant/14, embedding = 1536-d.
         "dim": 1536,
-        "gated": True,        # gated=AUTO -> instant approval on accepting terms
-        "pool": "cls",
+        "gated": True,                # gated=AUTO -> instant approval on accepting terms
+        "blocks": 40,                 # ViT-g: 40 blocks
+        # timm block indices (0..39); readout = last block:
+        "layers": (13, 27, 39),
         # H-optimus-0 requires these non-default timm construction args:
         "timm_kwargs": {"init_values": 1e-5, "dynamic_img_size": False},
     },
     "h0_mini": {
         "hf_id": "bioptimus/H0-mini",
         "backend": "timm",
-        # CLS token is 768-d (the recommended probing feature). 1536 is ONLY if
-        # you concatenate CLS + mean-patch; we default to CLS to match CytoSyn's
-        # H0-mini conditioning space. Keep 768 consistent across probe/SAE/index.
+        # CLS token is 768-d (the recommended probing feature, matches CytoSyn's
+        # H0-mini conditioning space). We store CLS(768) as global and mean-patch
+        # (768) as local separately — richer than the old cls_meanpatch concat.
         "dim": 768,
-        "gated": True,        # gated + approval-queued; needs `hf auth login`
-        "pool": "cls",        # "cls" (768) | "cls_meanpatch" (1536)
+        "gated": True,                # gated + approval-queued; needs `hf auth login`
+        "blocks": 12,                 # ViT-b: 12 blocks
+        # timm block indices (0..11); readout = last block:
+        "layers": (3, 7, 11),
         # H0-mini requires these non-default timm construction args:
         "timm_kwargs": {"mlp_layer": "SwiGLUPacked", "act_layer": "SiLU"},
     },

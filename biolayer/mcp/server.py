@@ -16,14 +16,23 @@ mcp = FastMCP("biolayer-certify")
 
 @mcp.tool()
 def certify(model: str = "phikon_v2", split: str = "train",
-            pos: str = "TUM", neg: str = "LYM", n_null: int = 200) -> dict:
+            pos: str = "TUM", neg: str = "LYM", n_null: int = 200,
+            track: str = None) -> dict:
     """Certify a pathology-FM concept prediction: full causal evidence card.
 
-    Runs every pillar (probe, readout necessity, sufficiency/steering,
-    specificity, confound gate) against matched-random nulls and returns the
-    structured, auditable evidence card with literature grounding + caveat.
+    Pass `track` ("phikon" | "h0") to use that pipeline's model + objective, or
+    give (model, pos, neg) directly. Runs every pillar (probe, readout necessity,
+    sufficiency/steering, specificity, layer-resolved curve, confound gate)
+    against matched-random nulls and returns the structured, auditable evidence
+    card with literature grounding + caveat.
     """
-    return verbs.certify(model, split, pos, neg, n_null)
+    return verbs.certify(model, split, pos, neg, n_null, track=track)
+
+
+@mcp.tool()
+def hypothesis(track: str = "phikon", split: str = "train") -> dict:
+    """State the causal hypothesis a track certifies + the ordered verb pipeline."""
+    return verbs.hypothesis(track, split)
 
 
 @mcp.tool()
@@ -31,6 +40,14 @@ def probe(model: str = "phikon_v2", split: str = "train",
           pos: str = "TUM", neg: str = "LYM") -> dict:
     """Derive the concept direction and report linear-probe separability."""
     return verbs.probe(model, split, pos, neg)
+
+
+@mcp.tool()
+def attribution(model: str = "phikon_v2", split: str = "train",
+                pos: str = "TUM", neg: str = "LYM", mode: str = "soft") -> dict:
+    """Patch-level 'hack': rank patches that build the concept global + a new
+    concept-focused global embedding, vs a matched-random null."""
+    return verbs.attribution_verb(model, split, pos, neg, mode)
 
 
 @mcp.tool()
@@ -53,6 +70,17 @@ def steer(model: str = "phikon_v2", split: str = "train",
           pos: str = "TUM", neg: str = "LYM", n_null: int = 200) -> dict:
     """Sufficiency: inject the concept direction to flip neg->pos vs a random null."""
     return verbs.steer(model, split, pos, neg, n_null)
+
+
+@mcp.tool()
+def layered(model: str = "phikon_v2", split: str = "train",
+            pos: str = "TUM", neg: str = "LYM", space: str = "global") -> dict:
+    """Layer-resolved necessity curve across the 3 extracted layers.
+
+    space: "global" (CLS) | "local" (mean patch token). Shows how concept
+    separability + readout necessity evolve with depth — the rigor curve.
+    """
+    return verbs.layered(model, split, pos, neg, space)
 
 
 @mcp.tool()

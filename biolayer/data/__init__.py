@@ -6,7 +6,7 @@ through the team's shared S3 bucket. Everything downstream (biolayer.causal,
 biolayer.mcp) consumes the embeddings this layer produces.
 """
 
-from . import s3_utils  # noqa: F401
+from . import loader, s3_utils  # noqa: F401
 from .models import DEVICE, load_encoder  # noqa: F401
 
-__all__ = ["s3_utils", "load_encoder", "DEVICE"]
+__all__ = ["s3_utils", "loader", "load_encoder", "DEVICE"]
