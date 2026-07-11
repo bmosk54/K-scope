@@ -3,7 +3,7 @@
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from model import InvalidTileError, get_model
@@ -43,8 +43,10 @@ def health():
 
 
 @app.post("/embed", response_model=EmbedResponse)
-async def embed(file: UploadFile | None = File(default=None), body: EmbedBase64Request | None = None):
+async def embed(request: Request, file: UploadFile | None = File(default=None)):
     model = get_model()
+
+    content_type = request.headers.get("content-type", "")
 
     if file is not None:
         raw = await file.read()
@@ -52,7 +54,12 @@ async def embed(file: UploadFile | None = File(default=None), body: EmbedBase64R
             image = model.decode_bytes_tile(raw)
         except InvalidTileError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-    elif body is not None:
+    elif content_type.startswith("application/json"):
+        payload = await request.json()
+        try:
+            body = EmbedBase64Request.model_validate(payload)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"invalid request body: {exc}") from exc
         try:
             image = model.decode_base64_tile(body.image_base64)
         except InvalidTileError as exc:
