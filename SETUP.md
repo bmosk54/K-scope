@@ -35,8 +35,10 @@ aws s3 ls s3://bucketbiolayer
 ```
 > NOTE: the current execution role has **ListBucket only** — no Get/PutObject on
 > `bucketbiolayer`. Until that role policy is fixed, embeddings can't go through
-> S3, so they are committed to this branch under `artifacts/` as the transfer
-> channel. See `--no-upload` on the extractor.
+> S3. They are **not** committed to git (`artifacts/`, `*.npz` are gitignored —
+> too large/binary for the shared baseline); regenerate them locally with the
+> `--no-upload` extractor below. Once the role is fixed, `--upload` + `s3_utils`
+> become the shared channel.
 
 ## 5. Reproduce
 ```bash
@@ -53,10 +55,11 @@ python -m biolayer.causal.battery --model phikon_v2 --split train --pos TUM --ne
 python -m biolayer.mcp.server
 ```
 
-## Pull the committed embeddings back into Python
+## Load embeddings back into Python
+Embeddings are gitignored, so regenerate them first (step 5), then:
 ```python
 import numpy as np
 d = np.load("artifacts/embeddings/nct_crc_he/phikon_v2/train.npz", allow_pickle=True)
 feats, labels, class_names = d["feats"], d["labels"], list(d["class_names"])
 ```
-(When the S3 role is fixed, use `biolayer.s3_utils.load_embeddings("phikon_v2", "train")` instead.)
+(When the S3 role is fixed, use `biolayer.data.s3_utils.load_embeddings("phikon_v2", "train")` instead.)
