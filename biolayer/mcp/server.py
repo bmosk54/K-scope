@@ -30,10 +30,24 @@ def certify(model: str = "phikon_v2", split: str = "train",
 
 
 @mcp.tool()
+def hypothesis(track: str = "phikon", split: str = "train") -> dict:
+    """State the causal hypothesis a track certifies + the ordered verb pipeline."""
+    return verbs.hypothesis(track, split)
+
+
+@mcp.tool()
 def probe(model: str = "phikon_v2", split: str = "train",
           pos: str = "TUM", neg: str = "LYM") -> dict:
     """Derive the concept direction and report linear-probe separability."""
     return verbs.probe(model, split, pos, neg)
+
+
+@mcp.tool()
+def attribution(model: str = "phikon_v2", split: str = "train",
+                pos: str = "TUM", neg: str = "LYM", mode: str = "soft") -> dict:
+    """Patch-level 'hack': rank patches that build the concept global + a new
+    concept-focused global embedding, vs a matched-random null."""
+    return verbs.attribution_verb(model, split, pos, neg, mode)
 
 
 @mcp.tool()
