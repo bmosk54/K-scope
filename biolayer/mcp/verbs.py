@@ -10,9 +10,9 @@ import numpy as np
 
 from .. import tracks
 from ..causal import attribution, battery, confound, intervene
+from ..causal import certify as certify_mod
 from ..causal import probe as _probe
 from ..data import loader
-from . import card as card_mod
 
 DEFAULT_DISTRACTOR = ("STR", "MUS")
 
@@ -44,7 +44,7 @@ def hypothesis(track="phikon", split="train"):
                      "attribution", "confound", "certify"],
         "falsifier": "a matched-random direction must NOT reproduce any effect; "
                      "if it does, the certificate is void (Section-5-D control)",
-        "citations": card_mod.CITATIONS,
+        "citations": certify_mod.CITATIONS,
     }
 
 
@@ -138,15 +138,10 @@ def confound_verb(model="phikon_v2", split="train", pos="TUM", neg="LYM", track=
 
 
 def certify(model="phikon_v2", split="train", pos="TUM", neg="LYM", n_null=200, track=None):
-    """Full evidence card: all pillars + layered curve + confound + literature."""
+    """Full modular certificate: pillars + universal confidence + reasoning trace +
+    confound + reusable steer/ablate handles + literature."""
     model, pos, neg, dist = _resolve(track, model, pos, neg)
     feats, labels, class_names, source = loader.load(model, split)
-    result = battery.run_battery(feats, labels, class_names, pos=pos, neg=neg,
-                                 distractor=dist, n_null=n_null)
-    confound_result = confound.confound_gate(
-        feats, labels, class_names, site_labels=None, pos=pos, neg=neg)
-    intervene_report = intervene.pending_report(model, split, pos, neg)
-    return card_mod.build_evidence_card(
-        battery_card=result, confound_result=confound_result,
-        intervene_report=intervene_report, model_key=model, split=split,
-        source=source, pos=pos, neg=neg)
+    return certify_mod.certify(
+        feats, labels, class_names, pos, neg, dist, model, split, source,
+        n_null=n_null, artifacts_dir=loader.ARTIFACTS_DIR)
