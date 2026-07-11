@@ -97,12 +97,12 @@ Every tile is embedded at **3 depths** × **{global CLS, local mean-patch}**. Da
   (`embeddings/`, `directions/`, `sae/`, `certificates/`). Note the current role has
   **ListBucket only** — until the policy is fixed, embeddings regenerate locally
   (`--no-upload`); they are gitignored (`*.npz`, `artifacts/`).
-- **GPU.** H-optimus-0 (ViT-g/14) needs a GPU. EKS cluster `fabulous-pop-sculpture`
-  exists (us-west-2); the intended worker is a **managed `g5.2xlarge` nodegroup**. **But
-  the account's On-Demand G/VT quota is 0**, so the nodegroup can't launch until an admin
-  raises it to ≥ 8 — see [`infra/`](../infra/README.md). Fallback with no quota need:
-  **SageMaker `ml.g5.2xlarge`** (quota = 1, same A10G), per [SETUP.md](SETUP.md). (An EKS
-  Hybrid-Nodes path — attach a non-EC2 external GPU — is kept in `infra/` as an alternative.)
+- **GPU.** H-optimus-0 (ViT-g/14) needs a GPU. Run it on **SageMaker `ml.g5.2xlarge`**
+  (A10G, ~22 GiB) — Studio JupyterLab or a Training Job (quota = 1 each), per
+  [SETUP.md](SETUP.md). EKS was evaluated and dropped: the account has **0 EC2 G/VT and 0
+  HyperPod g5 quota**, so no cluster can attach a GPU node — and a single extraction job
+  plus a stdio MCP server need no orchestration. A SageMaker **endpoint** (g5 quota = 2)
+  is the option if a hosted GPU inference service is ever needed.
 
 ## 6. Constraints & honesty caveats (non-negotiable)
 
