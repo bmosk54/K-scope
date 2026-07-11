@@ -97,13 +97,12 @@ Every tile is embedded at **3 depths** × **{global CLS, local mean-patch}**. Da
   (`embeddings/`, `directions/`, `sae/`, `certificates/`). Note the current role has
   **ListBucket only** — until the policy is fixed, embeddings regenerate locally
   (`--no-upload`); they are gitignored (`*.npz`, `artifacts/`).
-- **GPU.** H-optimus-0 (ViT-g/14) needs a GPU. **This account has 0 EC2 G/VT quota**
-  (On-Demand *and* Spot, us-west-2 + us-east-1), so a normal EKS `g5.2xlarge` nodegroup
-  **cannot join** — the node is an EC2 instance and hits the 0 quota. Two viable paths:
-  1. **SageMaker `ml.g5.2xlarge`** (quota = 1) — same A10G, no cluster ops. Default.
-  2. **EKS Hybrid Nodes** — attach an *external* GPU box (non-EC2 → bypasses the quota)
-     to the control plane via `nodeadm`. Config + runbook + feasibility flags:
-     [`infra/`](../infra/README.md).
+- **GPU.** H-optimus-0 (ViT-g/14) needs a GPU. EKS cluster `fabulous-pop-sculpture`
+  exists (us-west-2); the intended worker is a **managed `g5.2xlarge` nodegroup**. **But
+  the account's On-Demand G/VT quota is 0**, so the nodegroup can't launch until an admin
+  raises it to ≥ 8 — see [`infra/`](../infra/README.md). Fallback with no quota need:
+  **SageMaker `ml.g5.2xlarge`** (quota = 1, same A10G), per [SETUP.md](SETUP.md). (An EKS
+  Hybrid-Nodes path — attach a non-EC2 external GPU — is kept in `infra/` as an alternative.)
 
 ## 6. Constraints & honesty caveats (non-negotiable)
 

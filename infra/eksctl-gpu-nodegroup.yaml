@@ -1,0 +1,32 @@
+# Managed GPU nodegroup for the existing cluster `fabulous-pop-sculpture`.
+# This is the AWS-recommended path (a managed nodegroup — NOT a hand-attached EC2).
+# eksctl auto-creates the node IAM role, picks the AL2023 NVIDIA accelerated AMI for
+# GPU instance types, and wires CNI perms — replacing the manual console steps.
+#
+#   eksctl create nodegroup -f infra/eksctl-gpu-nodegroup.yaml
+#
+# ⚠️ BLOCKER: this account's "Running On-Demand G and VT instances" quota is 0 in
+# us-west-2. The nodegroup's ASG will try to launch the g5.2xlarge and fail with
+# VcpuLimitExceeded until an admin raises that quota to >= 8. See infra/README.md.
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: fabulous-pop-sculpture
+  region: us-west-2
+
+managedNodeGroups:
+  - name: gpu-g5
+    instanceType: g5.2xlarge          # 8 vCPU, 32 GiB, 1x A10G (~22 GiB usable)
+    amiFamily: AmazonLinux2023         # eksctl selects the NVIDIA variant for GPU types
+    desiredCapacity: 1
+    minSize: 0
+    maxSize: 1
+    volumeSize: 100                    # GiB — room for container images + model weights
+    labels:
+      nvidia.com/gpu: "true"
+    iam:
+      withAddonPolicies:
+        ebs: true                      # persistent volumes for cached weights/artifacts
+    # eksctl attaches AmazonEKSWorkerNodePolicy + ECR pull automatically.
+    # Ensure the VPC CNI has its own IRSA/Pod Identity, or CNI perms are on the node role.

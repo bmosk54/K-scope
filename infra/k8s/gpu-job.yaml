@@ -1,8 +1,8 @@
-# Runs the biolayer extractor on the hybrid GPU node once it has joined + reports Ready.
-# Prereq on the node: NVIDIA driver + the NVIDIA k8s device plugin (see README step 4),
-# which advertises `nvidia.com/gpu` so this Job can request it.
+# Runs the biolayer extractor on the g5.2xlarge managed nodegroup once the node is Ready.
+# Prereq: the NVIDIA k8s device plugin installed (README step 3) so the node advertises
+# `nvidia.com/gpu`. The AL2023 NVIDIA AMI already carries the host driver + toolkit.
 #
-#   kubectl apply -f infra/k8s/hf-secret.yaml       # your HF token (not committed)
+#   kubectl create secret generic hf-token --from-literal=token=<hf_read_token>
 #   kubectl apply -f infra/k8s/gpu-job.yaml
 ---
 apiVersion: batch/v1
@@ -14,14 +14,9 @@ spec:
   template:
     spec:
       restartPolicy: Never
-      # Land on the hybrid node specifically (hybrid nodes carry this label).
+      # Pin to the G5 node (the managed nodegroup's instance type).
       nodeSelector:
-        eks.amazonaws.com/compute-type: hybrid
-      # Hybrid nodes are tainted until the CNI is ready; tolerate the standard taints.
-      tolerations:
-        - key: "node.kubernetes.io/not-ready"
-          operator: "Exists"
-          effect: "NoSchedule"
+        node.kubernetes.io/instance-type: g5.2xlarge
       containers:
         - name: extract
           # Build + push this image (torch+timm+biolayer) to a registry the node can pull.

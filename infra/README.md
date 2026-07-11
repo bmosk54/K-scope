@@ -1,77 +1,59 @@
-# Infra — running biolayer on GPU via EKS **Hybrid Nodes**
+# Infra — running biolayer on a GPU via EKS
 
-## Why hybrid, not a normal nodegroup
+Cluster **`fabulous-pop-sculpture`** exists in **us-west-2**. Recommended path: a
+**managed GPU nodegroup** (not a hand-attached EC2, not hybrid). Files here:
 
-This workshop account has **0 GPU quota** — On-Demand *and* Spot G/VT vCPU = 0 in
-us-west-2 and us-east-1, no capacity reservations (probed 2026-07-11). A normal EKS
-managed nodegroup launches EC2 G-instances, which draw on that 0 quota and **fail at
-node-join**. `WSParticipantRole` cannot request a quota increase.
+- [`eksctl-gpu-nodegroup.yaml`](eksctl-gpu-nodegroup.yaml) — managed `g5.2xlarge` nodegroup
+- [`k8s/gpu-job.yaml`](k8s/gpu-job.yaml) — biolayer extractor Job requesting `nvidia.com/gpu: 1`
+- [`eksctl-hybrid-cluster.yaml`](eksctl-hybrid-cluster.yaml) + [`hybrid-node/`](hybrid-node) — the hybrid-node *alternative* (kept for reference)
 
-**Hybrid Nodes** sidestep this: you attach an **external** GPU machine (your own box /
-on-prem / another cloud) to the EKS control plane with `nodeadm`. AWS never launches an
-EC2 instance for it, so the EC2 quota is irrelevant. The control plane runs in AWS; the
-GPU is your hardware. (Fargate — the other non-EC2 EKS compute — has **no GPU support**,
-so it can't be used here.)
+## ⚠️ Blocker first: GPU quota is 0
 
-## What you must supply
+`Running On-Demand G and VT instances` = **0** in us-west-2 (Spot G also 0; no capacity
+reservations — probed 2026-07-11). A `g5.2xlarge` consumes **8 G-family vCPUs**, so the
+nodegroup's ASG will **fail to launch** with `VcpuLimitExceeded` regardless of how it's
+created. **An admin must raise that quota to ≥ 8** (Service Quotas → EC2 →
+"Running On-Demand G and VT instances"). `WSParticipantRole` cannot request this itself.
 
-- **An external Linux GPU machine** with a supported OS (AL2023 / Ubuntu 20.04+ / RHEL 8+),
-  an NVIDIA driver, and containerd. This repo's WSL2 box has **no GPU** — it can't be the
-  node. Source a GPU box (personal workstation, lab machine, RunPod/Lambda/GCP instance, …).
+Until then, the only provisioned GPU on this account is a **SageMaker `ml.g5.2xlarge`**
+(quota = 1, same A10G) — see [../docs/SETUP.md](../docs/SETUP.md).
 
-## Steps
+## Steps (once quota ≥ 8)
 
-1. **Create the cluster** (control plane only, no EC2 workers):
+1. **Create the nodegroup** — eksctl auto-creates the node IAM role, picks the AL2023
+   **NVIDIA** accelerated AMI for GPU instance types, and wires CNI perms:
    ```bash
-   eksctl create cluster -f infra/eksctl-hybrid-cluster.yaml
+   eksctl create nodegroup -f infra/eksctl-gpu-nodegroup.yaml
    ```
-   Edit the `remoteNodeNetworks` / `remotePodNetworks` CIDRs first to match your GPU box.
+   (Or the AWS Console flow: EKS → cluster → Compute → Add node group, AMI type
+   **Amazon Linux 2023 x86_64 NVIDIA**, `g5.2xlarge`, disk 100 GiB, min 0 / desired 1 /
+   max 1. Node role must trust `ec2.amazonaws.com` and carry `AmazonEKSWorkerNodePolicy`
+   + `AmazonEC2ContainerRegistryPullOnly`; give the VPC CNI its perms via IRSA/Pod Identity.)
 
-2. **Create node credentials (admin step).** Hybrid nodes authenticate via an SSM hybrid
-   activation *or* IAM Roles Anywhere:
+2. **Point kubectl at the cluster + confirm the node joined:**
    ```bash
-   aws ssm create-activation --region us-west-2 \
-     --default-instance-name owkin-hybrid-gpu \
-     --iam-role <EKSHybridNodeRole> --registration-limit 1
-   ```
-   Put the returned `ActivationCode` / `ActivationId` into
-   [hybrid-node/nodeadm-config.yaml](hybrid-node/nodeadm-config.yaml).
-
-3. **Install a hybrid-compatible CNI** (VPC CNI is not supported on hybrid nodes):
-   ```bash
-   helm install cilium cilium/cilium -n kube-system \
-     --set ipam.mode=cluster-pool --set ipam.operator.clusterPoolIPv4PodCIDRList='{10.86.0.0/16}'
+   aws eks update-kubeconfig --region us-west-2 --name fabulous-pop-sculpture
+   kubectl get nodes -o wide            # the g5 node should show Ready
    ```
 
-4. **Join the GPU node** (run on the external machine) — see the header of
-   [hybrid-node/nodeadm-config.yaml](hybrid-node/nodeadm-config.yaml) for the `nodeadm`
-   install + `init` commands. Then install the NVIDIA device plugin so pods can request GPUs:
+3. **Install the NVIDIA device plugin** (AMI has drivers, not the k8s plugin):
    ```bash
-   kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.15.0/deployments/static/nvidia-device-plugin.yml
-   kubectl get nodes -o wide     # your GPU box should show Ready
+   helm repo add nvdp https://nvidia.github.io/k8s-device-plugin && helm repo update
+   helm upgrade --install nvdp nvdp/nvidia-device-plugin \
+     --namespace nvidia --create-namespace --set gfd.enabled=true
+   kubectl get nodes -o=custom-columns='NAME:.metadata.name,GPU:.status.allocatable.nvidia\.com/gpu'
    ```
 
-5. **Run the workload:**
+4. **Run the workload:**
    ```bash
    kubectl create secret generic hf-token --from-literal=token=<hf_read_token>
-   kubectl apply -f infra/k8s/gpu-job.yaml     # set image + track first
+   kubectl apply -f infra/k8s/gpu-job.yaml      # set image + track first
    kubectl logs -f job/biolayer-extract
    ```
 
-## Feasibility flags — verify before committing time
+## Still to wire
 
-These are the parts most likely to block a **participant** role; confirm with organizers:
-
-- **Networking is the hard prerequisite.** The control plane must route to your node's
-  node/pod CIDRs and vice-versa — normally **site-to-site VPN or Direct Connect**. Over
-  plain internet this needs deliberate setup; `kubectl logs/exec`, webhooks, and metrics
-  all depend on control-plane→node reachability.
-- **IAM.** `ssm:CreateActivation` + creating the `EKSHybridNodeRole` (or an IAM Roles
-  Anywhere trust anchor/profile) likely exceeds `WSParticipantRole` permissions. May need
-  an admin/organizer to run step 2.
-- **Cluster create.** `eksctl create cluster` provisions a VPC + control plane (billable,
-  slow ~15 min) — confirm the participant role may create EKS clusters.
-
-If any of these are blocked, the fallback that *is* provisioned on this account is a
-**SageMaker `ml.g5.2xlarge`** (quota = 1) — same A10G GPU, no cluster/networking, per
-[../docs/SETUP.md](../docs/SETUP.md).
+- **Container image.** Build `torch`+`timm`+`biolayer` into an image and push to ECR
+  (the node's role has `ECRContainerRegistryPullOnly`); set it in `gpu-job.yaml`.
+- **S3 for artifacts.** Prefer IRSA on the Job's service account for `bucketbiolayer`
+  (SETUP.md notes the current role is ListBucket-only — may need a policy fix to upload).
