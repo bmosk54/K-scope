@@ -97,9 +97,13 @@ Every tile is embedded at **3 depths** × **{global CLS, local mean-patch}**. Da
   (`embeddings/`, `directions/`, `sae/`, `certificates/`). Note the current role has
   **ListBucket only** — until the policy is fixed, embeddings regenerate locally
   (`--no-upload`); they are gitignored (`*.npz`, `artifacts/`).
-- **GPU.** H-optimus-0 (ViT-g/14) needs a GPU. Today: SageMaker A10G. Scaling path:
-  an **EKS node group with `g5.2xlarge`** (1× A10G 24 GB) — see §6 of this doc's
-  companion discussion / the infra notes for the NVIDIA device-plugin + Job spec.
+- **GPU.** H-optimus-0 (ViT-g/14) needs a GPU. **This account has 0 EC2 G/VT quota**
+  (On-Demand *and* Spot, us-west-2 + us-east-1), so a normal EKS `g5.2xlarge` nodegroup
+  **cannot join** — the node is an EC2 instance and hits the 0 quota. Two viable paths:
+  1. **SageMaker `ml.g5.2xlarge`** (quota = 1) — same A10G, no cluster ops. Default.
+  2. **EKS Hybrid Nodes** — attach an *external* GPU box (non-EC2 → bypasses the quota)
+     to the control plane via `nodeadm`. Config + runbook + feasibility flags:
+     [`infra/`](../infra/README.md).
 
 ## 6. Constraints & honesty caveats (non-negotiable)
 

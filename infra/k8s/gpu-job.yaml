@@ -1,0 +1,41 @@
+# Runs the biolayer extractor on the hybrid GPU node once it has joined + reports Ready.
+# Prereq on the node: NVIDIA driver + the NVIDIA k8s device plugin (see README step 4),
+# which advertises `nvidia.com/gpu` so this Job can request it.
+#
+#   kubectl apply -f infra/k8s/hf-secret.yaml       # your HF token (not committed)
+#   kubectl apply -f infra/k8s/gpu-job.yaml
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: biolayer-extract
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      # Land on the hybrid node specifically (hybrid nodes carry this label).
+      nodeSelector:
+        eks.amazonaws.com/compute-type: hybrid
+      # Hybrid nodes are tainted until the CNI is ready; tolerate the standard taints.
+      tolerations:
+        - key: "node.kubernetes.io/not-ready"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+        - name: extract
+          # Build + push this image (torch+timm+biolayer) to a registry the node can pull.
+          image: REPLACE_ME/biolayer:latest
+          command: ["python", "-m", "biolayer.data.extract",
+                    "--track", "h0", "--split", "train", "--per-class", "600", "--no-upload"]
+          resources:
+            limits:
+              nvidia.com/gpu: 1        # requires the NVIDIA device plugin on the node
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: token
+            # S3 creds: prefer IRSA. If the hybrid node can't assume the IRSA role,
+            # mount the workshop session creds as a Secret instead (short-lived).
