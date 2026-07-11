@@ -5,13 +5,17 @@ Both backends share the same contract:
 so extract.py batches identically regardless of which FM is loaded. CPU-safe:
 everything runs under torch.inference_mode() on the default device (cpu here).
 """
+import os
+
 import numpy as np
 import torch
 
 from . import config
 
-# c5.4xlarge is CPU-only; make CPU inference deterministic + threaded.
+# c5.4xlarge is CPU-only; use all vCPUs for inference throughput.
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if DEVICE.type == "cpu":
+    torch.set_num_threads(os.cpu_count() or 1)
 
 
 def _load_transformers(spec):
@@ -33,36 +37,48 @@ def _load_transformers(spec):
 
 
 def _load_timm(spec):
-    """H0-mini (gated): timm ViT. Embedding = concat(CLS, mean patch) -> 1536.
+    """H0-mini (gated): timm ViT. Recommended feature = CLS token (768-d).
 
-    Requires `huggingface-cli login` + accepted terms at hf.co/bioptimus/H0-mini
-    before the weights will download. DINOv2-style: prefix tokens (CLS + registers)
-    are skipped when meaning the patch tokens.
+    Requires `hf auth login` + APPROVED terms at hf.co/bioptimus/H0-mini before
+    weights download (approval is queued — HF signup email must match the
+    institutional/Dartmouth email). H0-mini needs non-default construction args
+    (SwiGLU MLP + SiLU act) and uses its OWN pretrained_cfg normalization.
+
+    pool: "cls" -> 768 (default, matches CytoSyn conditioning space)
+          "cls_meanpatch" -> concat(CLS, mean patch) = 1536
     """
     import timm
 
+    # Resolve string kwargs from config into real timm/torch objects.
+    kw = dict(spec.get("timm_kwargs", {}))
+    if kw.get("mlp_layer") == "SwiGLUPacked":
+        kw["mlp_layer"] = timm.layers.SwiGLUPacked
+    if kw.get("act_layer") == "SiLU":
+        kw["act_layer"] = torch.nn.SiLU
+
     model = timm.create_model(
-        f"hf-hub:{spec['hf_id']}", pretrained=True, num_classes=0
+        f"hf-hub:{spec['hf_id']}", pretrained=True, **kw
     ).to(DEVICE).eval()
 
-    data_cfg = timm.data.resolve_model_data_config(model)
-    transform = timm.data.create_transform(**data_cfg, is_training=False)
-    num_prefix = getattr(model, "num_prefix_tokens", 1)  # CLS (+ registers)
+    # Use the model's own normalization, per the model card.
+    from timm.data import create_transform, resolve_data_config
+    transform = create_transform(**resolve_data_config(model.pretrained_cfg, model=model))
+    num_prefix = getattr(model, "num_prefix_tokens", 5)  # CLS + 4 registers
     pool = spec.get("pool", "cls")
 
     @torch.inference_mode()
     def embed(images):
         x = torch.stack([transform(im.convert("RGB")) for im in images]).to(DEVICE)
-        feats = model.forward_features(x)  # (B, T, D) for ViT
-        if feats.ndim == 3:
-            cls = feats[:, 0]
+        out = model(x)  # H0-mini returns tokens (B, 1+reg+patches, 768)
+        if out.ndim == 3:
+            cls = out[:, 0]  # (B, 768) — recommended probing feature
             if pool == "cls_meanpatch":
-                patch_mean = feats[:, num_prefix:].mean(dim=1)
-                emb = torch.cat([cls, patch_mean], dim=-1)  # (B, 2D) = 1536
+                patch_mean = out[:, num_prefix:].mean(dim=1)
+                emb = torch.cat([cls, patch_mean], dim=-1)  # (B, 1536)
             else:
                 emb = cls
         else:  # already pooled -> (B, D)
-            emb = feats
+            emb = out
         return emb.float().cpu().numpy()
 
     return embed

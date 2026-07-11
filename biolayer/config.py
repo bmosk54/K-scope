@@ -57,12 +57,28 @@ MODELS = {
         "gated": False,
         "pool": "cls",
     },
+    "h_optimus_0": {
+        "hf_id": "bioptimus/H-optimus-0",
+        "backend": "timm",
+        # Flagship H-optimus-0: ViT-giant/14, CLS embedding = 1536-d.
+        # model(x) returns the pooled (B, 1536) CLS directly.
+        "dim": 1536,
+        "gated": True,        # gated=AUTO -> instant approval on accepting terms
+        "pool": "cls",
+        # H-optimus-0 requires these non-default timm construction args:
+        "timm_kwargs": {"init_values": 1e-5, "dynamic_img_size": False},
+    },
     "h0_mini": {
         "hf_id": "bioptimus/H0-mini",
         "backend": "timm",
-        "dim": 1536,          # 768 CLS  concat  768 mean-patch  = 1536
-        "gated": True,        # needs `huggingface-cli login` + accepted terms
-        "pool": "cls_meanpatch",
+        # CLS token is 768-d (the recommended probing feature). 1536 is ONLY if
+        # you concatenate CLS + mean-patch; we default to CLS to match CytoSyn's
+        # H0-mini conditioning space. Keep 768 consistent across probe/SAE/index.
+        "dim": 768,
+        "gated": True,        # gated + approval-queued; needs `hf auth login`
+        "pool": "cls",        # "cls" (768) | "cls_meanpatch" (1536)
+        # H0-mini requires these non-default timm construction args:
+        "timm_kwargs": {"mlp_layer": "SwiGLUPacked", "act_layer": "SiLU"},
     },
 }
 
