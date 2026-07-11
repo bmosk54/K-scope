@@ -41,25 +41,41 @@ aws s3 ls s3://bucketbiolayer
 > become the shared channel.
 
 ## 5. Reproduce
+
+Work is split into two independent **tracks** (`biolayer.tracks`) — each is its own
+model + dataset + objective + layer set, so Phikon-v2 and H0 never share assumptions:
+
+| Track | Model | Dataset | Objective | Layers |
+|---|---|---|---|---|
+| `phikon` | Phikon-v2 (ungated) | NCT-CRC-HE | TUM vs LYM (tumor-immune) | 8/16/24 |
+| `h0` | H0-mini (gated) | NCT-CRC-HE → cell-type (TODO) | TUM vs NORM (malignancy) | 3/7/11 |
+
+Every tile is embedded at **3 layers**, each with **global (CLS)** and **local
+(mean patch)** features.
+
 ```bash
-# Phikon-v2 embeddings (ungated, ~1.5 tiles/s on CPU)
-python -m biolayer.data.extract --model phikon_v2 --split train --per-class 200 --no-upload
+# Phikon track — multi-layer local+global embeddings (A10G GPU)
+python -m biolayer.data.extract --track phikon --split train --per-class 600 --no-upload
 
-# H-optimus-0 embeddings (gated=auto; ViT-giant, slower on CPU — keep per-class small)
-python -m biolayer.data.extract --model h_optimus_0 --split train --per-class 150 --no-upload
+# H0 track — separate pipeline/objective (gated; h0_mini approval-queued, or flip
+# H0_MODEL_KEY to h_optimus_0 in tracks/h0.py to run today)
+python -m biolayer.data.extract --track h0 --split train --per-class 600 --no-upload
 
-# Base causal battery (readout space, matched-random nulls) -> evidence-card JSON
+# Readout-space causal battery -> evidence-card JSON
 python -m biolayer.causal.battery --model phikon_v2 --split train --pos TUM --neg LYM
 
-# MCP server exposing certify(prediction) -> evidence card (stdio transport)
+# MCP server: certify(prediction) -> evidence card (stdio transport)
 python -m biolayer.mcp.server
 ```
 
 ## Load embeddings back into Python
 Embeddings are gitignored, so regenerate them first (step 5), then:
 ```python
-import numpy as np
-d = np.load("artifacts/embeddings/nct_crc_he/phikon_v2/train.npz", allow_pickle=True)
-feats, labels, class_names = d["feats"], d["labels"], list(d["class_names"])
+from biolayer.data import loader
+# readout global (back-compat single feature)
+feats, labels, class_names, src = loader.load("phikon_v2", "train")
+# any of the 3 layers x {global (CLS), local (mean patch)}
+Xg, *_ = loader.load_layer("phikon_v2", "train", layer="mid", space="global")
+Xl, *_ = loader.load_layer("phikon_v2", "train", layer="readout", space="local")
 ```
 (When the S3 role is fixed, use `biolayer.data.s3_utils.load_embeddings("phikon_v2", "train")` instead.)

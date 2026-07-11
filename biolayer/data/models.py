@@ -1,9 +1,17 @@
-"""Frozen encoder loading. load_encoder(model_key) -> embed(images) -> (N, dim).
+"""Frozen encoder loading with MULTI-LAYER, LOCAL+GLOBAL embedding.
 
-Both backends share the same contract:
-    embed(images: list[PIL.Image]) -> np.ndarray of shape (len(images), dim)
-so extract.py batches identically regardless of which FM is loaded. Everything
-runs under torch.inference_mode() on the auto-detected device.
+load_encoder(model_key) -> embed(images) -> (globals, locals), spec
+
+At each of the model's 3 configured layers we return BOTH:
+    global : the CLS token           -> (B, L, dim)   tile-level readout feature
+    local  : the mean patch token    -> (B, L, dim)   local morphology / texture
+
+Both backends share this contract so extract.py is model-agnostic:
+    transformers -> AutoModel(output_hidden_states=True); global=hs[l][:,0],
+                    local=hs[l][:,1:].mean(1)
+    timm         -> get_intermediate_layers(return_prefix_tokens=True); global=
+                    prefix[:,0] (CLS), local=patch_tokens.mean(1)
+Everything runs under torch.inference_mode() on the auto-detected device.
 """
 import os
 
@@ -12,45 +20,53 @@ import torch
 
 from .. import config
 
-# This instance has an NVIDIA A10G GPU -> DEVICE=cuda (H-optimus-0 ViT-g/14 needs
-# it in practice). Falls back to CPU (all vCPUs) if no GPU is present.
+# A10G GPU on this instance -> cuda (H-optimus-0 ViT-g/14 needs it). CPU fallback.
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if DEVICE.type == "cpu":
     torch.set_num_threads(os.cpu_count() or 1)
 
 
+def _stack(globals_list, locals_list):
+    """(list of (B,D)) x L -> ((B,L,D) global, (B,L,D) local) as float32 numpy."""
+    g = torch.stack(globals_list, dim=1).float().cpu().numpy()
+    l = torch.stack(locals_list, dim=1).float().cpu().numpy()
+    return g, l
+
+
 def _load_transformers(spec):
-    """Phikon-v2 (ungated): AutoModel, CLS = last_hidden_state[:, 0, :]."""
+    """Phikon-v2 (ungated): AutoModel, hidden states at the configured layers.
+
+    hidden_states is a tuple of length n_blocks+1 (index 0 = embeddings,
+    index i = after block i, index n_blocks = last_hidden_state). Phikon-v2 has a
+    single CLS prefix token (no registers), so patches = tokens[:, 1:].
+    """
     from transformers import AutoImageProcessor, AutoModel
 
     processor = AutoImageProcessor.from_pretrained(spec["hf_id"], use_fast=True)
     model = AutoModel.from_pretrained(spec["hf_id"]).to(DEVICE).eval()
+    layers = spec["layers"]
 
     @torch.inference_mode()
     def embed(images):
         inputs = processor(images=[im.convert("RGB") for im in images],
                            return_tensors="pt").to(DEVICE)
-        out = model(**inputs)
-        cls = out.last_hidden_state[:, 0, :]  # CLS token -> (B, 1024)
-        return cls.float().cpu().numpy()
+        out = model(**inputs, output_hidden_states=True)
+        hs = out.hidden_states  # tuple, each (B, 1+P, dim)
+        globs = [hs[l][:, 0] for l in layers]          # CLS  -> global
+        locs = [hs[l][:, 1:].mean(dim=1) for l in layers]  # mean patch -> local
+        return _stack(globs, locs)
 
     return embed
 
 
 def _load_timm(spec):
-    """H0-mini (gated): timm ViT. Recommended feature = CLS token (768-d).
+    """H0-mini / H-optimus-0 (gated timm ViTs): get_intermediate_layers.
 
-    Requires `hf auth login` + APPROVED terms at hf.co/bioptimus/H0-mini before
-    weights download (approval is queued — HF signup email must match the
-    institutional/Dartmouth email). H0-mini needs non-default construction args
-    (SwiGLU MLP + SiLU act) and uses its OWN pretrained_cfg normalization.
-
-    pool: "cls" -> 768 (default, matches CytoSyn conditioning space)
-          "cls_meanpatch" -> concat(CLS, mean patch) = 1536
+    Requires `hf auth login` + accepted terms. Uses the model's own normalization.
+    prefix tokens = CLS (+ registers for H0-mini); CLS = prefix[:, 0].
     """
     import timm
 
-    # Resolve string kwargs from config into real timm/torch objects.
     kw = dict(spec.get("timm_kwargs", {}))
     if kw.get("mlp_layer") == "SwiGLUPacked":
         kw["mlp_layer"] = timm.layers.SwiGLUPacked
@@ -61,26 +77,19 @@ def _load_timm(spec):
         f"hf-hub:{spec['hf_id']}", pretrained=True, **kw
     ).to(DEVICE).eval()
 
-    # Use the model's own normalization, per the model card.
     from timm.data import create_transform, resolve_data_config
     transform = create_transform(**resolve_data_config(model.pretrained_cfg, model=model))
-    num_prefix = getattr(model, "num_prefix_tokens", 5)  # CLS + 4 registers
-    pool = spec.get("pool", "cls")
+    layers = spec["layers"]
 
     @torch.inference_mode()
     def embed(images):
         x = torch.stack([transform(im.convert("RGB")) for im in images]).to(DEVICE)
-        out = model(x)  # H0-mini returns tokens (B, 1+reg+patches, 768)
-        if out.ndim == 3:
-            cls = out[:, 0]  # (B, 768) — recommended probing feature
-            if pool == "cls_meanpatch":
-                patch_mean = out[:, num_prefix:].mean(dim=1)
-                emb = torch.cat([cls, patch_mean], dim=-1)  # (B, 1536)
-            else:
-                emb = cls
-        else:  # already pooled -> (B, D)
-            emb = out
-        return emb.float().cpu().numpy()
+        # one (patch_tokens (B,P,D), prefix (B,num_prefix,D)) pair per requested layer
+        outs = model.get_intermediate_layers(
+            x, n=layers, return_prefix_tokens=True, norm=True)
+        globs = [prefix[:, 0] for _, prefix in outs]        # CLS -> global
+        locs = [patch.mean(dim=1) for patch, _ in outs]     # mean patch -> local
+        return _stack(globs, locs)
 
     return embed
 
@@ -91,7 +100,8 @@ _LOADERS = {"transformers": _load_transformers, "timm": _load_timm}
 def load_encoder(model_key: str):
     """Return (embed_fn, spec) for a registered model.
 
-    embed_fn(images: list[PIL.Image]) -> np.ndarray (len(images), spec['dim']).
+    embed_fn(images: list[PIL.Image]) -> (globals, locals), each
+    np.ndarray of shape (len(images), len(spec['layers']), spec['dim']).
     """
     if model_key not in config.MODELS:
         raise KeyError(f"unknown model {model_key!r}; known: {list(config.MODELS)}")
