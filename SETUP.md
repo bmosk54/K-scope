@@ -41,13 +41,16 @@ aws s3 ls s3://bucketbiolayer
 ## 5. Reproduce
 ```bash
 # Phikon-v2 embeddings (ungated, ~1.5 tiles/s on CPU)
-python -m biolayer.extract --model phikon_v2 --split train --per-class 200 --no-upload
+python -m biolayer.data.extract --model phikon_v2 --split train --per-class 200 --no-upload
 
 # H-optimus-0 embeddings (gated=auto; ViT-giant, slower on CPU — keep per-class small)
-python -m biolayer.extract --model h_optimus_0 --split train --per-class 150 --no-upload
+python -m biolayer.data.extract --model h_optimus_0 --split train --per-class 150 --no-upload
 
 # Base causal battery (readout space, matched-random nulls) -> evidence-card JSON
-python -m biolayer.battery --model phikon_v2 --split train --pos TUM --neg LYM
+python -m biolayer.causal.battery --model phikon_v2 --split train --pos TUM --neg LYM
+
+# MCP server exposing certify(prediction) -> evidence card (stdio transport)
+python -m biolayer.mcp.server
 ```
 
 ## Pull the committed embeddings back into Python

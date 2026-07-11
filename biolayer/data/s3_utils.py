@@ -7,7 +7,7 @@ import os
 import boto3
 import numpy as np
 
-from . import config
+from .. import config
 
 _client = None
 

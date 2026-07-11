@@ -16,7 +16,8 @@ import time
 import numpy as np
 from PIL import Image
 
-from . import config, s3_utils
+from .. import config
+from . import s3_utils
 from .models import DEVICE, load_encoder
 
 

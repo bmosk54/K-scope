@@ -9,3 +9,4 @@ scikit-learn
 pandas
 matplotlib
 Pillow
+mcp
