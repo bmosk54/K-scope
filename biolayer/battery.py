@@ -166,8 +166,8 @@ def main():
                      "npz": npz_path}
     _pretty(card)
 
-    out = os.path.join(args.out_dir, config.PREFIX["certificates"],
-                       f"{args.model}_{args.split}_{args.pos}_vs_{args.neg}.json")
+    out = os.path.join(args.out_dir,
+                       config.certificate_key(args.model, args.split, args.pos, args.neg))
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w") as f:
         json.dump(card, f, indent=2)
