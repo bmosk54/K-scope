@@ -10,7 +10,7 @@ import os
 import numpy as np
 import torch
 
-from . import config
+from .. import config
 
 # This instance has an NVIDIA A10G GPU -> DEVICE=cuda (H-optimus-0 ViT-g/14 needs
 # it in practice). Falls back to CPU (all vCPUs) if no GPU is present.

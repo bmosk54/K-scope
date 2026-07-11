@@ -24,7 +24,7 @@
     "verdict": "concept axis carries the readout; random axes do not"
   },
   "sufficiency_steering": {
-    "alpha_classwidth": 21.48783185309786,
+    "alpha_classwidth": 21.48783185309783,
     "concept_flip_rate": 1.0,
     "random_flip_rate_mean": 0.0,
     "random_flip_rate_std": 0.0,
@@ -32,7 +32,7 @@
   },
   "specificity": {
     "distractor": "STR_vs_MUS",
-    "cos_with_concept_axis": 0.010589586443041959,
+    "cos_with_concept_axis": 0.010589586443042358,
     "target_acc_after_distractor_ablation": 1.0,
     "base_acc": 1.0,
     "verdict": "target probe intact after distractor ablation"

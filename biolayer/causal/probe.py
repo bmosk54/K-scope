@@ -9,7 +9,7 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
-from . import config
+from .. import config
 
 
 def _idx(class_names, name):
