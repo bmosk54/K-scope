@@ -681,7 +681,7 @@
   }
   async function bootstrapData() {
     try {
-      const r = await fetch("/api/all", { headers: { Accept: "application/json" } });
+      const r = await fetch("api/all", { headers: { Accept: "application/json" } });
       if (!r.ok) throw new Error("api " + r.status);
       const d = await r.json();
       if (d.error) throw new Error(d.error);
@@ -706,7 +706,7 @@
     btn.textContent = "running battery…";
     goToView("case");
     try {
-      const r = await fetch("/api/certify_answer", {
+      const r = await fetch("api/certify_answer", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: window.CARD.prompt, answer: window.CARD.answer,
                                track: window.CARD.track, bedrock: true }),
