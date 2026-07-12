@@ -15,6 +15,8 @@ Outputs (default /tmp/patchwork): <stem>_patchwork.png, <stem>_distribution.png,
 <stem>_gallery.html (the existing interactive WSI-map visualizer over the top regions).
 """
 import argparse
+import html
+import json
 import os
 import sys
 import tempfile
@@ -36,6 +38,38 @@ B, REGION = "bucketbiolayer", "us-west-2"
 s3 = boto3.client("s3", region_name=REGION)
 
 
+def build_gallery_lowmem(reader, slide_uri, stem, regions, out_html, win=1536,
+                         quality=86, display_max=1024, overview_max=1400):
+    """Same visualizer UI as wsi_patch_gallery (its _TEMPLATE + _jpeg_uri), but crop each
+    region via openslide read_region (KB-scale random access) instead of the whole level-0
+    plane — so it runs on a small box where the full-plane read (here 8 GB) OOMs."""
+    l0w, l0h = reader.dimensions
+    thumb, _ = reader.thumbnail(overview_max)
+    over_uri, _ = gallery._jpeg_uri(thumb, quality=82)
+    out = []
+    for cx, cy, title, desc in regions:
+        ox = max(0, min(int(cx) - win // 2, l0w - win))
+        oy = max(0, min(int(cy) - win // 2, l0h - win))
+        crop = np.asarray(reader.read_region((ox, oy), 0, (win, win)).convert("RGB"))
+        uri, _ = gallery._jpeg_uri(crop, quality=quality, maxside=display_max)
+        out.append({"title": title, "desc": desc, "cx": ox + win // 2, "cy": oy + win // 2,
+                    "ox": ox, "oy": oy, "w": win, "h": win, "img": uri,
+                    "box": {"l": round(100 * ox / l0w, 3), "t": round(100 * oy / l0h, 3),
+                            "w": round(100 * win / l0w, 3), "h": round(100 * win / l0h, 3)}})
+    mpp = reader.mpp
+    mag = round(10.0 / mpp) if mpp else None
+    page = (gallery._TEMPLATE
+            .replace("__STEM__", html.escape(stem)).replace("__SRCURI__", html.escape(slide_uri))
+            .replace("__OVERVIEW__", over_uri).replace("__PATCHES__", json.dumps(out))
+            .replace("__L0W__", str(l0w)).replace("__L0H__", str(l0h))
+            .replace("__MPP_NUM__", repr(mpp if mpp else 0.0))
+            .replace("__MPP_TXT__", f"{mpp:.4f} µm/px" if mpp else "unknown")
+            .replace("__MAG_TXT__", f"≈ {mag}×" if mag else "unknown"))
+    with open(out_html, "w") as f:
+        f.write(page)
+    return {"n_patches": len(out)}
+
+
 def _dl(key, local):
     if not os.path.exists(local):
         print(f"downloading {key} ...", flush=True)
@@ -43,21 +77,25 @@ def _dl(key, local):
     return local
 
 
-def rank_patches(stem, pos, tmp, chunk=200_000):
-    """Score every 14x14 patch of one slide by the pos-vs-rest axis; return sorted meta."""
+def rank_patches(stem, pos, tmp, chunk=20_000):
+    """Score every 14x14 patch of one slide by the pos-vs-rest axis; return sorted meta.
+    float32 + small chunks so a multi-hundred-k-row patch shard doesn't blow local RAM."""
     V = np.load(_dl(f"embeddings/wsi/{stem}/patch_vectors.npy", os.path.join(tmp, f"{stem}_pv.npy")),
                 mmap_mode="r")
     M = np.load(_dl(f"embeddings/wsi/{stem}/patch_meta.npz", os.path.join(tmp, f"{stem}_pm.npz")))
     feats, labels, cn, _ = loader.load("h_optimus_0", "train")
     labels, cn = np.asarray(labels), list(cn)
     fit = P.fit_probe(np.asarray(feats), (labels == cn.index(pos)).astype(int))
-    d, mean, scale = fit["direction"], fit["scaler"].mean_, fit["scaler"].scale_
+    d = fit["direction"].astype("float32")
+    mean = fit["scaler"].mean_.astype("float32")
+    scale = fit["scaler"].scale_.astype("float32")
     n = len(V)
-    scores = np.empty(n)
+    scores = np.empty(n, dtype="float32")
     for i in range(0, n, chunk):
-        Vo = np.asarray(V[i:i + chunk], dtype=np.float64)
+        Vo = np.asarray(V[i:i + chunk], dtype="float32")
         scores[i:i + len(Vo)] = ((Vo - mean) / scale) @ d
     order = np.argsort(-scores)
+    print(f"[patchwork] scored {n} patches (score {scores.min():+.2f}..{scores.max():+.2f})", flush=True)
     return order, scores, M
 
 
@@ -122,8 +160,9 @@ def main():
         x, y, sz = patch_box(idx)
         regions.append((x + sz // 2, y + sz // 2, f"#{k + 1}  {args.pos}", f"score {scores[idx]:+.2f}"))
     html_path = os.path.join(args.out, f"{stem}_gallery.html")
-    meta = gallery.build_gallery(local, regions, html_path, scratch=tmp, size=512)
-    print(f"[patchwork] regional gallery ({meta['n_patches']} regions) -> {html_path}", flush=True)
+    meta = build_gallery_lowmem(reader, args.wsi, stem, regions, html_path)
+    print(f"[patchwork] regional gallery ({meta['n_patches']} regions, existing visualizer UI) "
+          f"-> {html_path}", flush=True)
 
 
 if __name__ == "__main__":
