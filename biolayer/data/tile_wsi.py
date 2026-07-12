@@ -142,7 +142,11 @@ def tile_slide(path: str, out_dir: str, tile_px: int = 224, target_mpp: float = 
                 row = {"file": fname, "x": x0, "y": y0, "level": level,
                        "mpp": eff_mpp, "metrics": metrics, "kept": keep}
                 if keep:
-                    tile.save(os.path.join(out_dir, fname))
+                    # Save from the pixel array (not `tile`) so no ICC/text chunk is
+                    # written — OpenSlide attaches the slide's ICC profile to each region,
+                    # and some slides' profiles are large enough to trip PIL's decompression
+                    # guard when the tile PNG is re-opened downstream.
+                    Image.fromarray(rgb).save(os.path.join(out_dir, fname))
                     n_kept += 1
                 else:
                     row["file"] = None  # dropped: metrics logged, no file written

@@ -90,7 +90,11 @@ def _build_transform(model):
 
 @torch.inference_mode()
 def _embed(model, tf, tile_dir, device, batch=32):
-    from PIL import Image
+    from PIL import Image, ImageFile, PngImagePlugin
+    # Belt-and-suspenders for any pre-existing tiles that still carry a big ICC/text
+    # chunk (new tiles are saved metadata-free upstream): don't let PIL's guard abort.
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
+    PngImagePlugin.MAX_TEXT_CHUNK = 100 * 1024 * 1024
 
     rows = [json.loads(ln) for ln in open(os.path.join(tile_dir, "manifest.jsonl")) if ln.strip()]
     kept = [r for r in rows if r.get("file")]
