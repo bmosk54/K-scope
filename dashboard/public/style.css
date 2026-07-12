@@ -521,7 +521,9 @@ body[data-view="gallery"] #view-gallery { display: block; }
 /* the embedded gallery has its own header -> drop the redundant dashboard topbar here */
 body[data-view="gallery"] .topbar { display: none; }
 .gallery-frame {
-  width: 100%; height: calc(100vh - 64px); border: 1px solid var(--border);
+  /* height is set by fitGalleryFrame() to the iframe's own content height so there's no
+     nested scrollbar; min-height keeps it a full screen if that JS ever can't measure. */
+  width: 100%; min-height: calc(100vh - 64px); border: 1px solid var(--border);
   border-radius: 10px; background: var(--panel); display: block;
 }
 

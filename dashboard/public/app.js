@@ -1006,6 +1006,21 @@
       document.getElementById("topbar-tag").textContent = meta.tag;
     }
     if (id === "proof") { renderAnswerFlow(); renderQuadrant(); renderQuadrantSelection(); renderNecessityChart(); }
+    if (id === "gallery") setTimeout(fitGalleryFrame, 60);   // lazy iframe: size after it paints
+  }
+
+  // Grow the embedded gallery iframe to its own content height so it never shows a nested
+  // scrollbar — it's same-origin, so we can read its document height directly. Falls back to
+  // the CSS height on the (unexpected) cross-origin case.
+  function fitGalleryFrame() {
+    const f = document.getElementById("gallery-frame");
+    if (!f) return;
+    try {
+      const doc = f.contentDocument || (f.contentWindow && f.contentWindow.document);
+      if (!doc || !doc.body) return;
+      const h = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight);
+      if (h > 0) f.style.height = h + "px";
+    } catch (e) { /* cross-origin — leave the CSS height */ }
   }
 
   function initNavigation() {
@@ -1255,8 +1270,15 @@
 
     goToView("prompt");   // land on the Prompt section
 
+    // re-fit the gallery iframe whenever it (re)loads — initial load, or an in-gallery
+    // source/axis switch that navigates it to a sibling gallery file.
+    const gf = document.getElementById("gallery-frame");
+    if (gf) gf.addEventListener("load", () => { fitGalleryFrame(); setTimeout(fitGalleryFrame, 200); });
+
+    let _gfRz;
     window.addEventListener("resize", () => {
       renderHistology();
+      clearTimeout(_gfRz); _gfRz = setTimeout(fitGalleryFrame, 120);  // frame height tracks width
       if (document.getElementById("view-proof").classList.contains("active")) {
         renderAnswerFlow();
         renderQuadrant();

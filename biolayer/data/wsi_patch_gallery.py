@@ -157,6 +157,9 @@ _TEMPLATE = r"""<!DOCTYPE html>
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }   /* keep the hidden attr authoritative over flex/grid rules */
+  /* kill all transitions during a theme flip so elements with their own transition (e.g. the
+     top/bottom-24 buttons) recolor instantly instead of cross-fading — no "light up" flash */
+  :root.theme-switch * { transition: none !important; }
   body { margin: 0; background: var(--bg); color: var(--ink);
     font-family: var(--sans); line-height: 1.5; -webkit-font-smoothing: antialiased; }
   .wrap { max-width: 1180px; margin: 0 auto; padding: clamp(18px, 3.5vw, 44px); position: relative; }
@@ -354,10 +357,13 @@ _TEMPLATE = r"""<!DOCTYPE html>
         <dl>
           <dt>Center (level 0)</dt><dd id="md-center">—</dd>
           <dt>Origin (level 0)</dt><dd id="md-origin">—</dd>
-          <dt>Size</dt><dd id="md-size">—</dd>
+          <dt>Crop window</dt><dd id="md-size">—</dd>
+          <dt>Ranked unit</dt><dd id="md-unit">—</dd>
           <dt>Resolution</dt><dd>__MPP_TXT__</dd>
           <dt>Magnification</dt><dd>__MAG_TXT__</dd>
         </dl>
+        <p class="hint">The crop is a context window, not the embedded unit: the encoder
+          reads 224&nbsp;px tiles and ranking scores each 14&times;14 patch token.</p>
       </div>
 
       <div class="panel">
@@ -437,12 +443,17 @@ _TEMPLATE = r"""<!DOCTYPE html>
     stageImg.src = p.img;
     stageImg.alt = `${p.title} — level-0 tile at (${p.ox}, ${p.oy})`;
     document.getElementById('st-title').textContent = p.title;
-    document.getElementById('st-note').textContent = `${p.w} × ${p.h} px · level 0`;
+    document.getElementById('st-note').textContent = `${p.w} × ${p.h} px crop · level 0`;
     document.getElementById('md-title').textContent = p.title;
     document.getElementById('md-desc').textContent = p.desc;
     document.getElementById('md-center').textContent = `${p.cx}, ${p.cy}`;
     document.getElementById('md-origin').textContent = `${p.ox}, ${p.oy}`;
-    document.getElementById('md-size').textContent = `${p.w} × ${p.h}`;
+    document.getElementById('md-size').textContent = `${p.w} × ${p.h} px`;
+    // ranked unit = one 14×14 patch token: the 224px tile's level-0 footprint / 16.
+    if (MPP > 0) {
+      const tokPx = Math.round(224 * Math.max(0.5 / MPP, 1) / 16);
+      document.getElementById('md-unit').textContent = `~${tokPx} px · ${(tokPx * MPP).toFixed(1)} µm token`;
+    } else { document.getElementById('md-unit').textContent = '14×14 patch token'; }
     if (MPP > 0) {
       const tileUm = p.w * MPP;
       let target = tileUm / 5, mag = Math.pow(10, Math.floor(Math.log10(target)));
@@ -470,7 +481,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
   const tRoot = document.documentElement, tBtn = document.getElementById('theme-toggle'),
         tIcon = document.getElementById('theme-icon'), tLabel = document.getElementById('theme-label');
   function applyTheme(mode) {
+    // disable transitions, commit the new palette in one synchronous reflow, then re-enable
+    // on the next frame — the recolor is instant, so nothing cross-fades / flashes.
+    tRoot.classList.add('theme-switch');
     tRoot.setAttribute('data-theme', mode);
+    void tRoot.offsetWidth;                                  // force the recalc while frozen
+    requestAnimationFrame(() => tRoot.classList.remove('theme-switch'));
     tIcon.textContent = mode === 'dark' ? '☀' : '◐';
     tLabel.textContent = mode === 'dark' ? 'Light' : 'Dark';
   }
