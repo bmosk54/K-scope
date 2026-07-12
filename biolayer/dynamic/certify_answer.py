@@ -104,7 +104,12 @@ def certify_answer(prompt, answer, track="phikon", split="train", n_null=200,
         # Necessity: LIVE source-intervention if a slide is supplied and the substrate
         # is hook-capable (transformers/phikon); else cached readout-space.
         live_nec, intervened, layered = None, False, None
-        if live_ctx and _live.supports_live(cl.model_key):
+        # Only run live on claims whose label space matches the slide's: live_ctx carries
+        # NCT-labeled tiles, so a HistoPLUS cell claim (different class_names) must NOT run
+        # live against them — it stays cached. live_ctx w/o a dataset_slug marker = no guard.
+        _live_ds = live_ctx.get("dataset_slug") if live_ctx else None
+        if (live_ctx and _live.supports_live(cl.model_key)
+                and (_live_ds is None or _live_ds == cl.dataset_slug)):
             try:
                 # Reuse the resident/warm encoder — never cold-load weights per call.
                 enc = live_ctx.get("encoder")

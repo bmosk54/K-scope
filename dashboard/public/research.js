@@ -152,6 +152,8 @@
     agg = {};
     el.summary.hidden = true; el.aggBox.innerHTML = "";
     pipeReset(); pipeRunning(true);
+    if ($("rr-tile-iter")) $("rr-tile-iter").textContent = "starting…";
+    drawTile(null);
     cliClear(el.problem.value.trim());
     cliLine('<span class="rr-cli-k">booting causal battery · opening SSE stream …</span>', "dim");
     var q = new URLSearchParams({
@@ -258,6 +260,105 @@
     updateAgg(r.circuit || [], r.circuit_mode);
     pipeUpdate(r);
     cliEmit(r);
+    renderResearchTile(c.pos, c.neg, r);   // overlay where THIS probe fires on the input tile
+  }
+
+  // ---- input tile: the loop runs on THIS tile; overlay updates each iteration --------
+  var tileImg = null, tileMaps = null, tileHover = null;
+  var tCanvas = $("rr-tile-canvas"), tCtx = tCanvas ? tCanvas.getContext("2d") : null;
+
+  function loadInputTile() {
+    if (!tCanvas) return;
+    fetch("heatmaps/input_tile.json").then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d) return;
+        tileMaps = d.axes || {};
+        tileImg = new Image();
+        tileImg.onload = function () { drawTile(null); };
+        tileImg.src = d.tile || "input_tile.png";
+      }).catch(function () {});
+    tCanvas.addEventListener("mousemove", onTileHover);
+    tCanvas.addEventListener("mouseleave", hideTileTip);
+  }
+
+  function drawTile(hm) {
+    if (!tCtx) return;
+    var W = tCanvas.width;
+    tCtx.clearRect(0, 0, W, W);
+    if (tileImg) tCtx.drawImage(tileImg, 0, 0, W, W);
+    tileHover = null;
+    if (!hm) { $("rr-tile-legend").innerHTML = ""; return; }
+    var S = hm.grid_side, CELL = W / S, z = hm.z_grid, nm = hm.norm_grid, DARK = 0.74;
+    for (var r = 0; r < S; r++) for (var c = 0; c < S; c++) {
+      var v = (nm[r] && nm[r][c]) || 0;
+      var toward = ((z[r] && z[r][c]) || 0) >= 0 ? "255,95,95" : "90,150,255";
+      tCtx.fillStyle = "rgba(11,10,18," + (DARK * (1 - v)).toFixed(3) + ")";  // veil weak patches
+      tCtx.fillRect(c * CELL, r * CELL, CELL + 0.6, CELL + 0.6);
+      tCtx.fillStyle = "rgba(" + toward + "," + (0.5 * v).toFixed(3) + ")";   // tint by pole
+      tCtx.fillRect(c * CELL, r * CELL, CELL + 0.6, CELL + 0.6);
+    }
+    var tp = hm.top_patch || 0, tr = Math.floor(tp / S), tc = tp % S;
+    tCtx.strokeStyle = "#ffe08a"; tCtx.lineWidth = 1.6;
+    tCtx.strokeRect(tc * CELL + 0.8, tr * CELL + 0.8, CELL, CELL);
+    tileHover = buildRanks(hm);
+    var posL = hm.pos_label || hm.pos, negL = hm.neg_label || hm.neg;
+    $("rr-tile-legend").innerHTML =
+      '<span style="color:#7fb0ff">◀ ' + escapeHtml(negL) + '</span>' +
+      '<span class="rr-leg-bar"></span>' +
+      '<span style="color:#ff8a8a">' + escapeHtml(posL) + ' ▶</span>';
+  }
+
+  function buildRanks(hm) {
+    var S = hm.grid_side, z = hm.z_grid, cells = [];
+    for (var r = 0; r < S; r++) for (var c = 0; c < S; c++) {
+      var zz = (z[r] && z[r][c]) || 0;
+      cells.push({ z: zz, mag: Math.abs(zz), pole: zz >= 0 ? "pos" : "neg",
+                   cls: zz >= 0 ? hm.pos : hm.neg,
+                   label: zz >= 0 ? (hm.pos_label || hm.pos) : (hm.neg_label || hm.neg) });
+    }
+    ["pos", "neg"].forEach(function (pole) {
+      var g = cells.filter(function (x) { return x.pole === pole; }).sort(function (a, b) { return b.mag - a.mag; });
+      g.forEach(function (x, i) { x.rank = i + 1; x.total = g.length; });
+    });
+    return { S: S, cells: cells };
+  }
+
+  function ordinal(n) { var s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
+
+  function onTileHover(e) {
+    if (!tileHover) return;
+    var rect = tCanvas.getBoundingClientRect(), S = tileHover.S, CELL = rect.width / S;
+    var c = Math.floor((e.clientX - rect.left) / CELL), r = Math.floor((e.clientY - rect.top) / CELL);
+    if (c < 0 || r < 0 || c >= S || r >= S) return hideTileTip();
+    var x = tileHover.cells[r * S + c]; if (!x) return;
+    var t = $("tooltip"); if (!t) return;
+    t.innerHTML = "<b>" + ordinal(x.rank) + " " + escapeHtml(x.cls) + "</b>" +
+      '<div style="opacity:.8;margin-top:2px">leans toward <b>' + escapeHtml(x.label) + "</b> · z " +
+      x.z.toFixed(2) + "<br>rank " + x.rank + " of " + x.total + " toward " + escapeHtml(x.cls) + "</div>";
+    t.style.display = "block"; t.style.opacity = "1";
+    t.style.left = Math.min(e.clientX + 16, window.innerWidth - 340) + "px";
+    t.style.top = Math.min(e.clientY + 16, window.innerHeight - 240) + "px";
+  }
+  function hideTileTip() { var t = $("tooltip"); if (t) { t.style.opacity = "0"; t.style.display = "none"; } }
+
+  function renderResearchTile(pos, neg, r) {
+    if (!tCanvas || !tileMaps || !pos || !neg) return;
+    var hm = tileMaps[pos + "_" + neg];
+    var itEl = $("rr-tile-iter"), capEl = $("rr-tile-cap");
+    if (itEl) itEl.innerHTML = "iter " + r.iter + " · probing <b>" + escapeHtml(pos + " vs " + neg) + "</b>";
+    if (!hm) {
+      drawTile(null);
+      if (capEl) capEl.innerHTML = "No per-tile map for <b>" + escapeHtml(pos + " vs " + neg) + "</b> on this tile.";
+      return;
+    }
+    drawTile(hm);
+    var posL = hm.pos_label || hm.pos;
+    var shareStr = Object.keys(hm.hot_share || {}).map(function (k) { return hm.hot_share[k] + "× " + k; }).join(", ");
+    if (capEl) capEl.innerHTML =
+      "Where the <b>" + escapeHtml(pos + " vs " + neg) + "</b> axis fires on the input tile " +
+      '(<span style="color:#ff8a8a">warm = ' + escapeHtml(posL) + "</span>). " +
+      "Top patch ◉ → <b>" + escapeHtml(hm.top_dir ? hm.top_dir.label : posL) + "</b>; hottest-8: " +
+      escapeHtml(shareStr || "—") + ". Hover a patch for its rank (e.g. 1st " + escapeHtml(pos) + ").";
   }
 
   function circuitRows(circuit, loadLayer) {
@@ -294,4 +395,6 @@
         '<span class="rr-agg-val">' + fmt(a.maxGap, 2) + '</span></div>';
     }).join("");
   }
+
+  loadInputTile();
 })();
