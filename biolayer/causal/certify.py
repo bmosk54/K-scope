@@ -207,6 +207,61 @@ def compute_confidence(pillars, bc, confound_result, chance=0.5):
     }
 
 
+GROUNDED, WEAK, NULL = "GROUNDED", "WEAK", "NULL"
+
+
+def headline_verdict(pillars, confidence, confound_result):
+    """Roll the pillars + null-integrity + confound gate into ONE headline verdict,
+    matching scorecard.py semantics so the certify card, certify_answer and AutoResearch
+    all speak the same GROUNDED/WEAK/NULL language.
+
+    GROUNDED  = sufficiency passes AND specificity does not collapse AND necessity is
+                GENUINE (a live / distributed source-intervention bite, NOT the near-
+                tautological readout-space projection certify caps).
+    NULL      = the matched-random null is not inert (Section-5-D falsifier), or nothing
+                separates the concept from its null.
+    WEAK      = anything in between (incl. the readout-only-necessity cap and the confound
+                cap) — the honest default on a single-source, redundancy-limited substrate.
+    Returns (verdict, reason).
+    """
+    suf = pillars.get("sufficiency") or {}
+    nec = pillars.get("necessity") or {}
+    spec = pillars.get("specificity")
+
+    # Falsifier gate: a non-inert matched-random null voids the certificate.
+    if not confidence.get("null_integrity", True):
+        return NULL, ("matched-random null is not inert — certificate void "
+                      "(Section-5-D falsifier)")
+
+    suf_passed, nec_passed = bool(suf.get("passed")), bool(nec.get("passed"))
+    if not suf_passed and not nec_passed:
+        return NULL, "neither sufficiency nor necessity separates the concept from its null"
+
+    # GENUINE necessity = a live / non-readout bite. Readout-only necessity is near-
+    # tautological (projecting out a ~1-D probe's own axis always collapses it), so it
+    # cannot promote GROUNDED — exactly scorecard's genuine_necessity gate.
+    basis = str((nec.get("raw") or {}).get("necessity_basis", ""))
+    genuine_necessity = bool(basis) and "readout-only" not in basis
+    spec_ok = (spec is None) or bool(spec.get("passed"))  # specificity, if run, must hold
+
+    if suf_passed and spec_ok and genuine_necessity:
+        verdict, why = GROUNDED, ("sufficiency + specificity pass on a genuine "
+                                  "(live / distributed) necessity")
+    elif suf_passed and spec_ok:
+        verdict, why = WEAK, ("capped at WEAK: necessity is the near-tautological readout-"
+                              "space projection (no live / non-readout bite) — run the live "
+                              "or layered source-intervention to earn GROUNDED")
+    else:
+        verdict, why = WEAK, "partial separation — not every pillar passes"
+
+    # Confound cap: an axis overlapping a site/scanner signature cannot read GROUNDED.
+    cf = confound_result.get("confound_gate", confound_result)
+    if verdict == GROUNDED and cf.get("status") == "ok" and cf.get("confounded"):
+        verdict, why = WEAK, ("capped at WEAK: causal axis overlaps a site/scanner "
+                              "signature (confound gate)")
+    return verdict, why
+
+
 def reasoning_trace(bc, pillars, confidence, confound_result):
     """Deterministic step-by-step narrative built from the numbers."""
     n, s = bc["necessity_readout"], bc["sufficiency_steering"]
@@ -329,12 +384,19 @@ def certify(feats, labels, class_names, pos, neg, distractor, model_key, split,
     confidence = compute_confidence(pillars, bc, {"confound_gate": confound_result}, chance)
     trace = reasoning_trace(bc, pillars, confidence, {"confound_gate": confound_result})
     reuse = persist_handles(handles, model_key, split, pos, neg, artifacts_dir)
+    verdict, verdict_reason = headline_verdict(
+        pillars, confidence, {"confound_gate": confound_result})
+    # close the trace with the headline verdict (mirrors the static card's step-7 "verdict")
+    trace.append({"n": len(trace) + 1, "pillar": "verdict", "step": "verdict",
+                  "observation": f"-> {verdict}", "interpretation": verdict_reason})
 
     return {
         "schema_version": SCHEMA_VERSION,
         "prediction": {"model": model_key, "split": split,
                        "concept": f"{pos}_vs_{neg}", "distractor": list(distractor),
                        "embeddings_source": source},
+        "verdict": verdict,
+        "verdict_reason": verdict_reason,
         "confidence": confidence,
         "pillars": pillars,
         "probe": bc["probe"],

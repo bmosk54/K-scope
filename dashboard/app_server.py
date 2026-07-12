@@ -51,9 +51,13 @@ _OPT_SYS = (
     "You refine a pathology question so it is SPECIFIC and answerable against tile-level "
     "tissue concepts the certifier can ground: tumor epithelium, lymphocytic/immune "
     "infiltrate, cancer-associated stroma, mucus, necrosis, smooth muscle, normal mucosa. "
-    "Given the current question (and, if provided, which claims certified vs were declined), "
-    "return ONE tighter, more specific question that targets the certifiable concepts and "
-    "drops un-testable parts. Output ONLY the question — no preamble, no quotes.")
+    "You are given the current question and the last certificate's TRACE — the per-claim "
+    "verdicts (which concepts certified GROUNDED/WEAK vs were declined NOT_CERTIFIABLE) and "
+    "the reason each decline happened. USE that trace: keep and sharpen the concepts that "
+    "grounded, and drop or reframe the parts that were declined as un-testable (cell/"
+    "subcellular morphology, spatial/positional, molecular/clinical). Return ONE tighter, "
+    "more specific question that targets the certifiable concepts. Output ONLY the question "
+    "— no preamble, no quotes.")
 
 
 def _slide():
@@ -184,7 +188,24 @@ def api_optimize():
     u = f"Current question: {prompt}\n"
     if a.get("coverage"):
         u += f"Last certificate coverage: {a['coverage']}\n"
-    u += "Return ONE tighter, more specific question:"
+    # The certify TRACE: per-claim verdicts + why each was declined, so the rewrite is
+    # grounded in what actually certified rather than just the coverage headline.
+    claims = a.get("claims") or []
+    if claims:
+        u += "Per-claim certify outcomes:\n"
+        for c in claims:
+            line = f"  - {c.get('claim', '?')!r} -> {c.get('verdict', '?')}"
+            if c.get("concept"):
+                line += f" [{c['concept']}"
+                line += f": {c['contrast']}]" if c.get("contrast") else "]"
+            if c.get("reason"):
+                line += f" — declined: {c['reason']}"
+            u += line + "\n"
+    for s in (a.get("summary_trace") or []):
+        if s.get("observation"):
+            u += f"  · {s.get('step', '')}: {s['observation']}\n"
+    u += ("Using these outcomes, return ONE tighter question that KEEPS the concepts that "
+          "certified and DROPS or reframes the parts that were declined:")
     try:
         opt = client._invoke(_OPT_SYS, u, max_tokens=120).strip().strip('"')
         return jsonify({"prompt": opt, "from": prompt})

@@ -202,9 +202,16 @@ def _conf_badge(conf):
 def _render(c):
     sc = c["spec"]
     cs = c["contrast"]
+    # Substrate is tagged PER CLAIM, not globally: different claims certify in different
+    # latents (tissue vs HistoPLUS cell types), each with its own CLS width. A global
+    # header would mislabel any claim that resolved off the answer's track.
+    dim = config.MODELS.get(c["substrate"], {}).get("dim")
+    substrate_tag = (f"{c['substrate']} · {c['source']} · {dim}-d" if dim
+                     else f"{c['substrate']} · {c['source']}")
     return {
         "claim": c["claim"], "concept": c["concept"], "polarity": c["polarity"],
         "substrate": c["substrate"], "label_source": c["source"],
+        "substrate_dim": dim, "substrate_tag": substrate_tag,
         "verdict": sc.verdict,
         "scores": {n: round(p.score, 3) for n, p in sc.pillars.items()},
         "pillars": {n: {"score": round(p.score, 3), "effect": round(p.effect, 3),
@@ -213,6 +220,7 @@ def _render(c):
                     for n, p in sc.pillars.items()},
         "confounded": sc.confounded,
         "contrast_capped": sc.contrast_capped,
+        "necessity_capped": sc.necessity_capped,
         "survives_multiple_comparisons": sc.survives_correction,
         "live_necessity": ({"intervened_on_input": True,
                             "curve": [{"layer": cc["layer"], "gap": cc["necessity_gap"],
