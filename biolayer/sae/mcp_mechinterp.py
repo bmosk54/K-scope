@@ -181,11 +181,15 @@ def explain(concept: str, n_tiles: int = 32, ks: list[int] | None = None) -> dic
     sel = (codes[y == ci] > 0).mean(0) - (codes[y != ci] > 0).mean(0)
     ranked = np.argsort(-sel)
 
-    tiles = np.where(y == ci)[0][:n_tiles]
+    # RANDOM sample within the class, not the first n. NCT-CRC-HE is class-sorted, so a prefix
+    # slice is a deterministic block of the class -- likely correlated in source slide -- and the
+    # numbers would be a property of those tiles rather than of the tissue type.
+    rng = np.random.default_rng(0)
+    pool = np.where(y == ci)[0]
+    tiles = np.sort(rng.choice(pool, min(n_tiles, len(pool)), replace=False))
     px = torch.stack([_tf(im) for im in load_tiles(tiles)]).to(s["dev"])
 
     # 3+4. INTERVENE, with a matched-random control at every step.
-    rng = np.random.default_rng(0)
     base = _ablate_and_run(s["model"], s["head"], px, None)
     p0 = float(base[:, ci].mean())
     curve, null = [], []
