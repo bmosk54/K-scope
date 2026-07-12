@@ -86,12 +86,14 @@ def tissue_mask(reader, sat_thresh: float = 0.05):
 # Tiling
 # ---------------------------------------------------------------------------
 def tile_slide(path: str, out_dir: str, tile_px: int = 224, target_mpp: float = 0.5,
-               filters=(), assume_mpp: float = None, min_tissue_frac: float = 0.35):
+               filters=(), assume_mpp: float = None, min_tissue_frac: float = 0.35,
+               max_tiles: int = None):
     """Tile a slide into `tile_px` tiles at ~`target_mpp` µm/px.
 
     Writes kept tiles as PNGs to out_dir and a manifest.jsonl (one row per CANDIDATE
     tile with coords + metrics + `kept`). `filters` = iterable of FILTERS names to
-    apply inline (empty = keep all). Returns (n_kept, n_candidates).
+    apply inline (empty = keep all). `max_tiles` stops after that many KEPT tiles
+    (for quick trial runs). Returns (n_kept, n_candidates).
     """
     os.makedirs(out_dir, exist_ok=True)
     reader = open_wsi(path)
@@ -109,7 +111,10 @@ def tile_slide(path: str, out_dir: str, tile_px: int = 224, target_mpp: float = 
 
         manifest = open(os.path.join(out_dir, "manifest.jsonl"), "w")
         n_kept = n_cand = 0
+        done = False
         for y0 in range(0, H - step + 1, step):
+            if done:
+                break
             for x0 in range(0, W - step + 1, step):
                 # coarse tissue gate: does this tile's footprint hit any tissue?
                 mx0, my0 = int(x0 / mask_ds), int(y0 / mask_ds)
@@ -131,6 +136,9 @@ def tile_slide(path: str, out_dir: str, tile_px: int = 224, target_mpp: float = 
                 else:
                     row["file"] = None  # dropped: metrics logged, no file written
                 manifest.write(json.dumps(row) + "\n")
+                if max_tiles and n_kept >= max_tiles:
+                    done = True
+                    break
         manifest.close()
         print(f"[tile] {path}: {n_kept}/{n_cand} tiles kept "
               f"(level {level}, ~{reader.mpp_at(level):.3f} µm/px)", flush=True)

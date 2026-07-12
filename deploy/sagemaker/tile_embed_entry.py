@@ -79,9 +79,11 @@ def main():
     s3.download_file(b, k, local)
     stem = os.path.splitext(os.path.basename(k))[0]
 
-    # 2. tile
+    # 2. tile (MAX_TILES caps kept tiles — for quick trial runs)
+    max_tiles = int(os.environ["MAX_TILES"]) if os.environ.get("MAX_TILES") else None
     tile_dir = os.path.join(tempfile.gettempdir(), "tiles", stem)
-    tile_wsi.tile_slide(local, tile_dir, tile_px=tile_px, target_mpp=mpp, filters=filters)
+    tile_wsi.tile_slide(local, tile_dir, tile_px=tile_px, target_mpp=mpp,
+                        filters=filters, max_tiles=max_tiles)
 
     # 3. embed
     device = "cuda" if torch.cuda.is_available() else "cpu"

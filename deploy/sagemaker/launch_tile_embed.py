@@ -49,6 +49,7 @@ def main():
     ap.add_argument("--filters", default="whitespace,tissue")
     ap.add_argument("--mpp", default="0.5")
     ap.add_argument("--tile-px", default="224")
+    ap.add_argument("--max-tiles", type=int, help="cap kept tiles (quick trial run)")
     ap.add_argument("--vector-index", default="layerbioindex",
                     help="h0-vector index (dim 1536, cosine); set '' to skip vector push")
     ap.add_argument("--region", default=os.environ.get("AWS_DEFAULT_REGION", "us-west-2"))
@@ -65,6 +66,8 @@ def main():
         "SLIDE_S3": args.slide, "SM_BUCKET": BUCKET,
         "FILTERS": args.filters, "MPP": args.mpp, "TILE_PX": args.tile_px,
     }
+    if args.max_tiles:
+        env["MAX_TILES"] = str(args.max_tiles)
     if os.environ.get("HF_TOKEN"):
         env["HF_TOKEN"] = os.environ["HF_TOKEN"]
     if args.vector_index:
