@@ -37,7 +37,10 @@ def _decision(fit, Xs_raw):
 
 
 def run_battery(feats, labels, class_names, pos="TUM", neg="LYM",
-                distractor=("STR", "MUS"), n_null=200, seed=0):
+                distractor=("STR", "MUS"), n_null=200, seed=0, return_handles=False):
+    """Run the readout-space battery. If return_handles, also return the reusable
+    concept-direction + scaler + alpha (non-JSON) so a certificate can persist them
+    for future steer/ablate without recomputing the probe."""
     rng = np.random.default_rng(seed)
     card = {"substrate": {"pos": pos, "neg": neg, "distractor": list(distractor),
                           "dim": int(feats.shape[1]), "n_null": n_null}}
@@ -117,6 +120,17 @@ def run_battery(feats, labels, class_names, pos="TUM", neg="LYM",
     except ValueError as e:
         card["specificity"] = {"skipped": str(e)}
 
+    if return_handles:
+        handles = {
+            "direction_std": u,                       # unit concept axis, standardized space
+            "scaler_mean": fit["scaler"].mean_,
+            "scaler_scale": fit["scaler"].scale_,
+            "coef": fit["w"], "intercept": fit["b"],
+            "alpha_classwidth": float(gap),
+            "chance": 0.5,
+            "pos": pos, "neg": neg,
+        }
+        return card, handles
     return card
 
 

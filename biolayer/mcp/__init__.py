@@ -8,4 +8,4 @@ claim carries its matched-random null. Run the server with:
     python -m biolayer.mcp.server
 """
 
-__all__ = ["card", "verbs"]
+__all__ = ["verbs"]
