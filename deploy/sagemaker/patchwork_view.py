@@ -37,10 +37,21 @@ from biolayer.data.wsi_reader import open_wsi               # noqa: E402
 B, REGION = "bucketbiolayer", "us-west-2"
 s3 = boto3.client("s3", region_name=REGION)
 
+# Known WSIs the gallery's source switcher can jump between. Each becomes an entry in the
+# clickable source menu; the href is the sibling gallery file for the SAME concept, so the
+# switch preserves which axis you're viewing. Extend as more slides are extracted.
+KNOWN_WSIS = [
+    ("TCGA-BRCA · invasive carcinoma",
+     "s3://bucketbiolayer/wsi/TCGA-BRCA/"
+     "TCGA-E2-A14P-01Z-00-DX1.663B02FF-C64B-41A6-8685-FD61CD76F9C6.svs"),
+    ("BRACS · breast subtyping",
+     "s3://bucketbiolayer/wsi/BRACS/BRACS_1003675.svs"),
+]
+
 
 def build_gallery_lowmem(reader, slide_uri, stem, regions, out_html, win=1536,
                          quality=86, display_max=1024, overview_max=1400, axis_note="",
-                         regions_bottom=None):
+                         regions_bottom=None, sources=None):
     """Same visualizer UI as wsi_patch_gallery (its _TEMPLATE + _jpeg_uri), but crop each
     region via openslide read_region (KB-scale random access) instead of the whole level-0
     plane — so it runs on a small box where the full-plane read (here 8 GB) OOMs.
@@ -76,7 +87,8 @@ def build_gallery_lowmem(reader, slide_uri, stem, regions, out_html, win=1536,
             .replace("__MPP_NUM__", repr(mpp if mpp else 0.0))
             .replace("__MPP_TXT__", f"{mpp:.4f} µm/px" if mpp else "unknown")
             .replace("__MAG_TXT__", f"≈ {mag}×" if mag else "unknown")
-            .replace("__AXIS_NOTE__", axis_note))
+            .replace("__AXIS_NOTE__", axis_note)
+            .replace("__SOURCES__", json.dumps(sources) if sources else "null"))
     with open(out_html, "w", encoding="utf-8") as f:
         f.write(page)
     return {"n_patches": len(out)}
@@ -203,13 +215,19 @@ def main():
     regions = to_regions(select_spread(order, args.n_regions, args.min_sep))
     # opposite end of the axis: the lowest-scoring patches (most un-<pos>), rank 1 = lowest
     regions_bottom = to_regions(select_spread(order[::-1], args.n_regions, args.min_sep))
-    html_path = os.path.join(args.out, f"{stem}_gallery.html")
+    # per-concept filename so TUM/STR/LYM galleries of one slide coexist (don't overwrite)
+    html_path = os.path.join(args.out, f"{stem}_{args.pos}_gallery.html")
     ref_label = {"bcss_breast": "breast (BCSS)", None: "colon (NCT-CRC)"}.get(
         args.axis_dataset, args.axis_dataset)
     axis_note = (f'<p class="axis-note">Patches ranked by the '
                  f'<span class="pill">{args.pos}</span> concept axis · fit from {ref_label}</p>')
+    # source switcher: one entry per known WSI; href = that slide's gallery for THIS concept
+    sources = [{"label": lbl,
+                "href": f"{os.path.splitext(os.path.basename(uri))[0]}_{args.pos}_gallery.html",
+                "current": os.path.splitext(os.path.basename(uri))[0] == stem}
+               for lbl, uri in KNOWN_WSIS]
     meta = build_gallery_lowmem(reader, args.wsi, stem, regions, html_path,
-                                axis_note=axis_note, regions_bottom=regions_bottom)
+                                axis_note=axis_note, regions_bottom=regions_bottom, sources=sources)
     print(f"[patchwork] regional gallery ({meta['n_patches']} regions, existing visualizer UI) "
           f"-> {html_path}", flush=True)
 

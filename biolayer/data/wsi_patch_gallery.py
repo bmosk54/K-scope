@@ -103,7 +103,7 @@ def build_gallery(slide: str, patches, out_html: str, scratch: str,
             .replace("__L0W__", str(l0w)).replace("__L0H__", str(l0h))
             .replace("__MPP_NUM__", repr(mpp if mpp else 0.0))
             .replace("__MPP_TXT__", mpp_txt).replace("__MAG_TXT__", mag_txt)
-            .replace("__AXIS_NOTE__", ""))
+            .replace("__AXIS_NOTE__", "").replace("__SOURCES__", "null"))
 
     os.makedirs(os.path.dirname(os.path.abspath(out_html)), exist_ok=True)
     with open(out_html, "w", encoding="utf-8") as f:
@@ -156,6 +156,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     --stage-ink: #d9cfda; --stage-muted: #7c6e7e;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }   /* keep the hidden attr authoritative over flex/grid rules */
   body { margin: 0; background: var(--bg); color: var(--ink);
     font-family: var(--sans); line-height: 1.5; -webkit-font-smoothing: antialiased; }
   .wrap { max-width: 1180px; margin: 0 auto; padding: clamp(18px, 3.5vw, 44px); position: relative; }
@@ -169,6 +170,23 @@ _TEMPLATE = r"""<!DOCTYPE html>
     color: var(--ink); display: inline-flex; align-items: center; gap: 8px; }
   .axis-note .pill { background: color-mix(in srgb, var(--accent) 16%, transparent);
     color: var(--accent); border-radius: 6px; padding: 2px 8px; font-weight: 600; }
+
+  /* source (WSI) switcher on the header link */
+  .src-switch { position: relative; display: inline-flex; align-items: center; gap: 4px; }
+  .src-switch.switchable { cursor: pointer; }
+  .src-switch.switchable:hover code.k { text-decoration: underline; }
+  .src-caret { color: var(--muted); font-size: 10px; }
+  .src-menu { position: absolute; top: 100%; left: 0; margin-top: 7px; z-index: 30;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 11px; padding: 6px;
+    min-width: 260px; box-shadow: 0 14px 34px -14px rgba(0,0,0,.55);
+    display: flex; flex-direction: column; gap: 2px; }
+  .src-item { text-align: left; background: none; border: 0; border-radius: 8px; padding: 8px 11px;
+    font-family: var(--sans); font-size: 12.5px; color: var(--ink); cursor: pointer;
+    display: flex; align-items: center; gap: 8px; }
+  .src-item:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .src-item.current { color: var(--accent); font-weight: 600; cursor: default; }
+  .src-item.current::before { content: "●"; font-size: 8px; }
+  .src-item:not(.current)::before { content: "○"; font-size: 8px; color: var(--muted); }
 
   /* rank-end toggle (top vs bottom of the axis) */
   .rank-toggle { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
@@ -287,7 +305,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <header>
     <span class="eyebrow">Whole-slide image · patch gallery</span>
     <h1>__STEM__</h1>
-    <p class="sub">H&amp;E · Aperio SVS · __MAG_TXT__ · <code class="k">__SRCURI__</code></p>
+    <p class="sub">H&amp;E · Aperio SVS · __MAG_TXT__ ·
+      <span class="src-switch" id="src-switch">
+        <code class="k" id="src-uri">__SRCURI__</code><span class="src-caret" id="src-caret" hidden>▾</span>
+        <span class="src-menu" id="src-menu" hidden></span>
+      </span>
+    </p>
     __AXIS_NOTE__
   </header>
 
@@ -452,6 +475,24 @@ _TEMPLATE = r"""<!DOCTYPE html>
     const next = tRoot.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
     applyTheme(next); localStorage.setItem('gallery-theme', next);
   });
+
+  // source (WSI) switcher: make the header link open a menu of known slides
+  const SOURCES = __SOURCES__;                      // [{label, href, current}] or null
+  const srcSwitch = document.getElementById('src-switch'),
+        srcMenu = document.getElementById('src-menu'), srcCaret = document.getElementById('src-caret');
+  if (SOURCES && SOURCES.length > 1) {
+    srcCaret.hidden = false;
+    srcSwitch.classList.add('switchable');
+    SOURCES.forEach(s => {
+      const it = document.createElement('button');
+      it.type = 'button'; it.className = 'src-item' + (s.current ? ' current' : '');
+      it.textContent = s.label; it.disabled = !!s.current;
+      it.addEventListener('click', (e) => { e.stopPropagation(); if (!s.current) location.href = s.href; });
+      srcMenu.appendChild(it);
+    });
+    srcSwitch.addEventListener('click', () => { srcMenu.hidden = !srcMenu.hidden; });
+    document.addEventListener('click', (e) => { if (!srcSwitch.contains(e.target)) srcMenu.hidden = true; });
+  }
 
   // top / bottom-of-axis toggle (only if a bottom set was supplied)
   const rankToggle = document.getElementById('rank-toggle'),
