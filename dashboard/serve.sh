@@ -16,6 +16,11 @@ cd "$(dirname "$0")"
 export PORT="${PORT:-4173}"
 export PYTHON="${PYTHON:-python3}"
 
+# Pull the prebuilt patch galleries (cached in S3, not in git — they embed JPEG crops and
+# run 15-22 MB each) into public/ so the Slide Gallery resolves without a rebuild.
+# Best-effort: won't block startup if boto3/creds are absent.
+"$PYTHON" fetch_galleries.py || true
+
 pkill -f "node server.js" 2>/dev/null || true
 sleep 1
 nohup node server.js > /tmp/biolayer-dashboard.log 2>&1 &
