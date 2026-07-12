@@ -7,7 +7,7 @@ Load H-optimus-0 via `timm`, modify its weights arbitrarily, run it on a
 |---|---|
 | [`hoptimus.py`](hoptimus.py) | Load via timm (`hf-hub:` + required kwargs) + `edit_weights()` for arbitrary weight surgery |
 | [`entry.py`](entry.py) | Training-job entry point: load → edit → embed → save to S3 |
-| [`launch.py`](launch.py) | CLI launcher (SageMaker SDK) — submits the job, no console |
+| [`launch.py`](launch.py) | CLI launcher (raw boto3) — packages to `bucketbiolayer`, submits the job, no console |
 | [`requirements.txt`](requirements.txt) | `timm` (auto-installed in the container) |
 
 ## Quick local check (no AWS, no HF)
@@ -23,14 +23,21 @@ manipulation API without the gated download.
 
 ## Run on SageMaker (CLI)
 
+`SAGEMAKER_ROLE_ARN` + `HF_TOKEN` are auto-exported by the workspace terminal (see
+[../../docs/SETUP.md](../../docs/SETUP.md) §3) — no manual export needed.
+
 ```bash
-export SAGEMAKER_ROLE_ARN=arn:aws:iam::735570134926:role/<execution-role>
-export HF_TOKEN=hf_xxx                 # gated H-optimus-0 download; omit + use --pretrained 0 to skip
-python deploy/sagemaker/launch.py --wait
+python deploy/sagemaker/launch.py                                    # pretrained g5 run
+python deploy/sagemaker/launch.py --pretrained 0 --instance-type ml.m5.large   # CPU smoke test
 ```
 
-Outputs (`hoptimus_edited.pt`, `sample_cls.pt`, `run.json`) land in the job's S3
-output path; track with `aws sagemaker describe-training-job --training-job-name <name>`.
+`launch.py` (raw boto3) tars this dir → `s3://bucketbiolayer/sagemaker/code`, then submits
+a training job in the prebuilt PyTorch DLC (which pip-installs `requirements.txt` and runs
+`entry.py`). Outputs (`hoptimus_edited.pt`, `sample_cls.pt`, `run.json`) land in
+`s3://bucketbiolayer/sagemaker/output`. Track:
+```bash
+aws sagemaker describe-training-job --training-job-name <name> --query TrainingJobStatus --output text
+```
 
 ## Status (2026-07-11)
 

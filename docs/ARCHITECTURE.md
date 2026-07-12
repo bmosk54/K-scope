@@ -90,19 +90,24 @@ Every tile is embedded at **3 depths** × **{global CLS, local mean-patch}**. Da
 
 ## 5. Compute & infrastructure (AWS)
 
-- **Auth.** Locally, workspace-scoped: a VSCode terminal profile sources
-  `.owkin_hack_aws.sh` (gitignored) + activates `owkin-env`. On the box, the SageMaker
-  **execution role** provides S3/GPU auth (no keys). See [SETUP.md](SETUP.md).
-- **Storage.** `s3://bucketbiolayer/` with per-dataset/per-model prefixes
-  (`embeddings/`, `directions/`, `sae/`, `certificates/`). Note the current role has
-  **ListBucket only** — until the policy is fixed, embeddings regenerate locally
-  (`--no-upload`); they are gitignored (`*.npz`, `artifacts/`).
-- **GPU.** H-optimus-0 (ViT-g/14) needs a GPU. Run it on **SageMaker `ml.g5.2xlarge`**
-  (A10G, ~22 GiB) — Studio JupyterLab or a Training Job (quota = 1 each), per
-  [SETUP.md](SETUP.md). EKS was evaluated and dropped: the account has **0 EC2 G/VT and 0
-  HyperPod g5 quota**, so no cluster can attach a GPU node — and a single extraction job
-  plus a stdio MCP server need no orchestration. A SageMaker **endpoint** (g5 quota = 2)
-  is the option if a hosted GPU inference service is ever needed.
+- **Auth.** Workspace-scoped: a VSCode terminal profile sources `.owkin_hack_aws.sh`
+  (gitignored: AWS session creds + `SAGEMAKER_ROLE_ARN`), exports `HF_TOKEN` live from the
+  HF cache, and activates `owkin-env`. On a SageMaker box the execution role provides auth.
+  See [SETUP.md](SETUP.md).
+- **Storage — two shared stores:**
+  - **`s3://bucketbiolayer`** (object storage) — **read/write for the team** (bucket
+    policy). Prefixes `embeddings/`, `directions/`, `sae/`, `certificates/` +
+    `sagemaker/code` and `sagemaker/output`. `--upload`/`s3_utils` = shared channel;
+    `*.npz`/`artifacts/` gitignored.
+  - **`h0-vector`** (S3 Vectors, acct `528759081002`, us-west-2) — team-granted
+    `PutVectors`/`QueryVectors`/…. **The embedding destination**: tile/slide vectors land
+    here and are queried by the biodiscovery retrieval layer.
+- **GPU — SageMaker Training Job, CLI only** (no Studio/UI). H-optimus-0 (ViT-g/14) runs
+  on **`ml.g5.2xlarge`** (A10G, quota = 1) via [`deploy/sagemaker/launch.py`](../deploy/sagemaker/launch.py)
+  (raw boto3), using execution role `owkin-sm-exec`. EKS was evaluated and **dropped**:
+  the account has **0 EC2 G/VT and 0 HyperPod g5 quota**, so no cluster can attach a GPU
+  node — and a single extraction job plus a stdio MCP server need no orchestration. A
+  SageMaker **endpoint** (g5 quota = 2) is the path if hosted GPU inference is ever needed.
 
 ## 6. Constraints & honesty caveats (non-negotiable)
 
@@ -125,3 +130,4 @@ Every tile is embedded at **3 depths** × **{global CLS, local mean-patch}**. Da
 | [RESULTS.md](RESULTS.md) | Substrate-transfer insights + measured readout-space battery results |
 | [SETUP.md](SETUP.md) | Instance transfer, HF/AWS auth, reproduce steps |
 | [DESIGN_MIL_AGGREGATOR.md](DESIGN_MIL_AGGREGATOR.md) | Slide-level aggregation by reusing a ViT's final block |
+| [../deploy/sagemaker/README.md](../deploy/sagemaker/README.md) | Run H-optimus-0 on SageMaker (CLI GPU) + arbitrary weight edits |
