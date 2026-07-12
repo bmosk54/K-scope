@@ -25,6 +25,7 @@ import os
 import tempfile
 
 import numpy as np
+from PIL import Image
 
 try:
     from .wsi_reader import open_wsi           # package module
@@ -101,10 +102,17 @@ def tile_slide(path: str, out_dir: str, tile_px: int = 224, target_mpp: float = 
         mpp = reader.mpp or assume_mpp
         if mpp is None:
             raise ValueError(f"{path}: no MPP metadata — pass assume_mpp (e.g. 0.5)")
-        # pick read level nearest target_mpp; step across the slide in level-0 coords
-        level = reader.level_for_downsample(target_mpp / mpp)
+        # Feed tiles at ~target_mpp: read from the finest pyramid level that is still at
+        # least the target resolution, then downsample to tile_px so the tile is truly at
+        # target_mpp (not the slide's native magnification).
+        d = target_mpp / mpp                      # desired downsample from level 0
+        if d < 1:                                 # slide coarser than target — can't upsample
+            d = 1.0
+        level = reader.level_for_downsample(d)
         ds = reader.level_downsamples[level]
-        step = int(round(tile_px * ds))
+        read_px = max(1, int(round(tile_px * d / ds)))   # region size at the read level
+        step = int(round(tile_px * d))            # step in level-0 coords (contiguous tiles)
+        eff_mpp = round(mpp * d, 4)               # effective tile mpp after resampling
         W, H = reader.dimensions
         mask, mask_ds = tissue_mask(reader)
         mh, mw = mask.shape
@@ -123,13 +131,14 @@ def tile_slide(path: str, out_dir: str, tile_px: int = 224, target_mpp: float = 
                 if cell.size == 0 or cell.mean() < min_tissue_frac:
                     continue
                 n_cand += 1
-                tile = reader.read_region((x0, y0), level, (tile_px, tile_px))
+                tile = reader.read_region((x0, y0), level, (read_px, read_px))
+                if tile.size != (tile_px, tile_px):          # resample to target mpp
+                    tile = tile.resize((tile_px, tile_px), Image.BILINEAR)
                 rgb = np.asarray(tile)
                 keep, metrics = eval_filters(rgb, filters)
                 fname = f"tile_x{x0}_y{y0}.png"
                 row = {"file": fname, "x": x0, "y": y0, "level": level,
-                       "mpp": round(reader.mpp_at(level) or mpp * ds, 4),
-                       "metrics": metrics, "kept": keep}
+                       "mpp": eff_mpp, "metrics": metrics, "kept": keep}
                 if keep:
                     tile.save(os.path.join(out_dir, fname))
                     n_kept += 1
@@ -141,7 +150,7 @@ def tile_slide(path: str, out_dir: str, tile_px: int = 224, target_mpp: float = 
                     break
         manifest.close()
         print(f"[tile] {path}: {n_kept}/{n_cand} tiles kept "
-              f"(level {level}, ~{reader.mpp_at(level):.3f} µm/px)", flush=True)
+              f"(read level {level} @ {read_px}px → {tile_px}px, ~{eff_mpp} µm/px)", flush=True)
         return n_kept, n_cand
     finally:
         reader.close()
