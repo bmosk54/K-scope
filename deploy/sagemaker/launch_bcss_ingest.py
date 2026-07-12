@@ -36,7 +36,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--role", default=os.environ.get("SAGEMAKER_ROLE_ARN"))
     ap.add_argument("--instance-type", default="ml.m5.large")
-    ap.add_argument("--prefix", default="datasets/bcss/images", help="S3 key prefix for the ROIs")
+    ap.add_argument("--root", default="datasets/bcss", help="S3 root (images/ + masks/ under it)")
+    ap.add_argument("--pipeline", default="images,masks",
+                    help="which BCSS parts to fetch+upload, e.g. 'images' | 'masks' | 'images,masks'")
     ap.add_argument("--region", default=os.environ.get("AWS_DEFAULT_REGION", "us-west-2"))
     args = ap.parse_args()
     if not args.role:
@@ -56,13 +58,15 @@ def main():
             "sagemaker_program": json.dumps("bcss_ingest_entry.py"),
             "sagemaker_submit_directory": json.dumps(f"s3://{BUCKET}/{code_key}"),
         },
-        Environment={"SM_BUCKET": BUCKET, "BCSS_PREFIX": args.prefix},
+        Environment={"SM_BUCKET": BUCKET, "BCSS_ROOT": args.root,
+                     "BCSS_PIPELINE": args.pipeline},
         OutputDataConfig={"S3OutputPath": f"s3://{BUCKET}/{PREFIX}/output"},
         ResourceConfig={"InstanceType": args.instance_type, "InstanceCount": 1,
                         "VolumeSizeInGB": 60},
         StoppingCondition={"MaxRuntimeInSeconds": 21600},
     )
-    print(f"[launch] SUBMITTED {job} on {args.instance_type} -> s3://{BUCKET}/{args.prefix}/")
+    print(f"[launch] SUBMITTED {job} ({args.pipeline}) on {args.instance_type} "
+          f"-> s3://{BUCKET}/{args.root}/")
     print(f"[launch] track: aws sagemaker describe-training-job --training-job-name {job} "
           "--query TrainingJobStatus --output text")
 
