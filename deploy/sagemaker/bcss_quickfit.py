@@ -15,6 +15,7 @@ s3://bucketbiolayer/datasets/bcss/{images,masks}/ and the endpoint InService.
 import base64
 import io
 import os
+import re
 import sys
 import tempfile
 
@@ -67,9 +68,14 @@ def _dl(key):
     return p
 
 
+def _stem(k):
+    # image: ..._xmin_ymin_MPP-0.2500.png  |  mask: ..._xmin_ymin_MAG-0.png  -> shared stem
+    return re.sub(r"_(MPP|MAG)-[^_/]*\.png$", "", os.path.basename(k))
+
+
 def sample_tiles():
-    masks = {os.path.basename(k): k for k in _ls("datasets/bcss/masks/") if k.endswith(".png")}
-    images = {os.path.basename(k): k for k in _ls("datasets/bcss/images/") if k.endswith(".png")}
+    masks = {_stem(k): k for k in _ls("datasets/bcss/masks/") if k.endswith(".png")}
+    images = {_stem(k): k for k in _ls("datasets/bcss/images/") if k.endswith(".png")}
     common = sorted(set(masks) & set(images))
     print(f"BCSS ROIs with image+mask: {len(common)} (images={len(images)} masks={len(masks)})",
           flush=True)
