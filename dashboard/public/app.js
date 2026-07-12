@@ -17,10 +17,17 @@
     danger: "#ef6572",
   };
 
-  const certifiable = window.CARD.claims.filter((c) => !!c.scores);
-  const declinedCount = window.CARD.claims.filter((c) => !c.scores).length;
+  let certifiable = window.CARD.claims.filter((c) => !!c.scores);
+  let declinedCount = window.CARD.claims.filter((c) => !c.scores).length;
   let selectedIdx = certifiable.findIndex((c) => c.id === "tils");
   if (selectedIdx < 0) selectedIdx = 0;
+
+  // recompute the derived claim state after a live CARD override (fetch / Run button)
+  function recomputeState() {
+    certifiable = window.CARD.claims.filter((c) => !!c.scores);
+    declinedCount = window.CARD.claims.filter((c) => !c.scores).length;
+    selectedIdx = Math.min(selectedIdx, Math.max(0, certifiable.length - 1));
+  }
 
   // ---------------------------------------------------------------- utils
   function mulberry32(seed) {
@@ -650,24 +657,8 @@
     });
   }
 
-  // ---------------------------------------------------------------- run button
-  let running = false;
-  function runCertifyAnimation() {
-    if (running) return;
-    running = true;
-    const btn = document.getElementById("btn-run");
-    btn.disabled = true;
-    btn.textContent = "running battery…";
-    goToView("case");
-    setTimeout(() => {
-      btn.disabled = false;
-      btn.textContent = "Run certify_answer()";
-      running = false;
-    }, 900);
-  }
-
-  // ---------------------------------------------------------------- init
-  function init() {
+  // ------------------------------------------------------------- render-all
+  function renderAll() {
     renderClaimStrip();
     renderHistology();
     renderQuadrant();
@@ -677,6 +668,63 @@
     renderCoverage();
     renderConfound();
     renderBuildNotes();
+  }
+
+  // ------------------------------------------------------ live data (bridge)
+  // Pull the REAL globals from the certify infra (/api/all). On any failure keep the
+  // static mock in data.js — the dashboard always renders. A small badge shows which.
+  function setLiveBadge(live) {
+    const el = document.getElementById("substrate-label");
+    if (!el) return;
+    el.dataset.live = live ? "1" : "0";
+    el.textContent = (live ? "● LIVE · " : "○ mock · ") + el.textContent.replace(/^[●○] (LIVE|mock) · /, "");
+  }
+  async function bootstrapData() {
+    try {
+      const r = await fetch("/api/all", { headers: { Accept: "application/json" } });
+      if (!r.ok) throw new Error("api " + r.status);
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      if (d.CARD) window.CARD = d.CARD;
+      if (d.DESIGNED_PROBES) window.DESIGNED_PROBES = d.DESIGNED_PROBES;
+      if (d.MCP_VERBS) window.MCP_VERBS = d.MCP_VERBS;
+      if (d.TRACKS) window.TRACKS = d.TRACKS;
+      recomputeState();
+      setLiveBadge(true);
+    } catch (e) {
+      setLiveBadge(false); // static mock retained
+    }
+  }
+
+  // ---------------------------------------------------------------- run button
+  let running = false;
+  async function runCertifyAnimation() {
+    if (running) return;
+    running = true;
+    const btn = document.getElementById("btn-run");
+    btn.disabled = true;
+    btn.textContent = "running battery…";
+    goToView("case");
+    try {
+      const r = await fetch("/api/certify_answer", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: window.CARD.prompt, answer: window.CARD.answer,
+                               track: window.CARD.track, bedrock: true }),
+      });
+      if (r.ok) {
+        const d = await r.json();
+        if (d.CARD) { window.CARD = d.CARD; recomputeState(); setLiveBadge(true); renderAll(); }
+      }
+    } catch (e) { /* keep current card */ }
+    btn.disabled = false;
+    btn.textContent = "Run certify_answer()";
+    running = false;
+  }
+
+  // ---------------------------------------------------------------- init
+  async function init() {
+    await bootstrapData();
+    renderAll();
 
     initNavigation();
     goToView("case");
