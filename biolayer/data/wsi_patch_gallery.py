@@ -223,7 +223,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
      the .show class, NOT the [hidden] attribute — SVGElement has no reflecting .hidden IDL prop,
      so `svg.hidden = false` would leave the attribute set and CSS would keep it display:none. */
   .unit-arrow { display: none; position: absolute; inset: 0; width: 100%; height: 100%;
-    pointer-events: none; overflow: visible; filter: drop-shadow(0 1px 2px rgba(0,0,0,.55)); }
+    pointer-events: none; overflow: visible; filter: drop-shadow(0 0.5px 1px rgba(0,0,0,.4)); }
   .unit-arrow.show { display: block; }
 
   /* three regions: thumb rail · stage · aside */
@@ -399,12 +399,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
           <!-- bold arrow that points at the tiny 14×14 box (shown only in patch mode) -->
           <svg class="unit-arrow" id="unit-arrow" viewBox="0 0 100 100" aria-hidden="true">
             <defs>
-              <marker id="ua-head" markerUnits="userSpaceOnUse" markerWidth="7" markerHeight="7"
-                      refX="4.6" refY="3" orient="auto">
-                <path d="M0,0 L6,3 L0,6 Z" fill="#ff1f2e"></path>
+              <marker id="ua-head" markerUnits="userSpaceOnUse" markerWidth="4.6" markerHeight="4.6"
+                      refX="3.2" refY="2" orient="auto">
+                <path d="M0,0 L4,2 L0,4 Z" fill="#ff1f2e"></path>
               </marker>
             </defs>
-            <line x1="87" y1="11" x2="52.4" y2="47.6" stroke="#ff1f2e" stroke-width="2.6"
+            <line x1="68" y1="27" x2="53" y2="46.2" stroke="#ff1f2e" stroke-width="1.3"
                   stroke-linecap="round" marker-end="url(#ua-head)"></line>
           </svg>
         </div>
