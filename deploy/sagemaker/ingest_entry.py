@@ -35,7 +35,7 @@ def main():
     counts = {}
     for raw in items:
         try:
-            status = wsi_ingest.ingest_one(wsi_ingest.parse_uuid(raw), s3, bucket)
+            status = wsi_ingest.ingest_item(raw, s3, bucket)   # GDC UUID | URL | KEY URL
         except Exception as e:
             print(f"ERROR on {raw!r}: {type(e).__name__}: {e}", flush=True)
             status = "error"

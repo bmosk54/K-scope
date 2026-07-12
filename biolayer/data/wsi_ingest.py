@@ -92,6 +92,39 @@ def ingest_one(uuid: str, s3, bucket: str) -> str:
     return "uploaded"
 
 
+def stream_url_to_s3(url: str, s3, bucket: str, key: str) -> str:
+    """Stream any http(s) URL straight to S3, idempotent by Content-Length."""
+    try:
+        size = int(urllib.request.urlopen(
+            urllib.request.Request(url, method="HEAD"), timeout=30
+        ).headers.get("Content-Length") or 0)
+    except Exception:
+        size = 0
+    head = _head(s3, bucket, key)
+    if head and size and head["ContentLength"] == size:
+        print(f"present, skip: s3://{bucket}/{key} ({size / 1e9:.2f} GB)")
+        return "present"
+    print(f"downloading {os.path.basename(key)} ({size / 1e9:.2f} GB) "
+          f"-> s3://{bucket}/{key}", flush=True)
+    with urllib.request.urlopen(url, timeout=60) as r:
+        s3.upload_fileobj(r, bucket, key)
+    print(f"done: s3://{bucket}/{key}", flush=True)
+    return "uploaded"
+
+
+def ingest_item(raw: str, s3, bucket: str) -> str:
+    """Dispatch one item: 'KEY<space>URL' | a generic http URL | a GDC UUID/URL."""
+    raw = raw.strip()
+    parts = raw.split(None, 1)
+    if len(parts) == 2 and parts[1].startswith(("http://", "https://")):
+        return stream_url_to_s3(parts[1], s3, bucket, parts[0])        # explicit S3 key
+    if raw.startswith(("http://", "https://")) and "gdc.cancer.gov" not in raw:
+        from urllib.parse import urlparse
+        name = os.path.basename(urlparse(raw).path)                    # generic URL
+        return stream_url_to_s3(raw, s3, bucket, f"wsi/misc/{name}")
+    return ingest_one(parse_uuid(raw), s3, bucket)                     # GDC file UUID/URL
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("ids", nargs="*", help="GDC UUIDs / data links / portal URLs")
@@ -111,8 +144,7 @@ def main():
     counts = {}
     for raw in items:
         try:
-            uuid = parse_uuid(raw)
-            status = ingest_one(uuid, s3, args.bucket)
+            status = ingest_item(raw, s3, args.bucket)
         except Exception as e:  # keep going on the rest of the batch
             print(f"ERROR on {raw!r}: {type(e).__name__}: {e}", file=sys.stderr)
             status = "error"
