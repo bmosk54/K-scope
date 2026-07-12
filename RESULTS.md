@@ -153,3 +153,62 @@ readout-necessity check per layer, on global *or* local space, each vs a matched
 null. (The *live* source-intervention propagation test — the true Hydra/redundancy
 probe — remains `necessity_curve`, track #3.) Exposed over MCP as the `layered` verb and
 folded into every `certify` card's `necessity_layered` field.
+
+---
+
+# Agent probe design — can the LLM WRITE the causal probes? (2026-07-12)
+
+**Question under test.** The static `certify` path routes a K-Pro answer onto
+*hand-authored* concept probes (a human picked each `(pos, neg, distractor)` contrast).
+Can we instead let Claude **design** the probes for an open question — choosing the
+contrasts itself — without producing confident-looking-but-confounded axes? Tested for
+the demo's core question, **"Characterize the tumor microenvironment."**
+
+**Setup.** Sonnet 4.6 on Bedrock (`us.anthropic.claude-sonnet-4-6`) was given **only the
+9 NCT-CRC class codes + one-line glosses + the question** — never the registry's answers,
+never the certificate math, and no say over certifiability. It proposed 8 probes; each
+ran through the **unchanged validation gate** (held-out AUROC ≥ 0.75,
+intensity-collinearity ≤ 0.60) + the readout battery on frozen Phikon-v2 CLS
+(200 tiles/class). New module `biolayer/dynamic/probe_design.py`.
+
+| LLM-designed probe | pos v neg | AUROC | intens_r | gate | suff-flip (null) |
+|---|---|---|---|---|---|
+| immune infiltration in tumor | LYM v TUM | 1.000 | 0.237 | ✅ | 1.00 (0.01) |
+| desmoplastic stromal reaction | STR v TUM | 1.000 | 0.581 | ✅ | 1.00 (0.03) |
+| stromal vs immune composition | STR v LYM | 1.000 | **0.646** | ❌ | 1.00 (0.00) |
+| tumor necrosis burden | DEB v TUM | 0.999 | 0.128 | ✅ | 1.00 (0.01) |
+| mucinous microenvironment | MUC v TUM | 0.996 | 0.426 | ✅ | 1.00 (0.00) |
+| peritumoral immune exclusion | LYM v STR | 1.000 | **0.646** | ❌ | 1.00 (0.00) |
+| normal mucosa displacement | NORM v TUM | 1.000 | 0.172 | ✅ | 1.00 (0.00) |
+| adipose infiltration of stroma | ADI v STR | 1.000 | 0.229 | ✅ | 1.00 (0.00) |
+
+## Read of the numbers
+
+1. **6/8 (75%) passed the gate, and the survivors are causally as clean as the
+   hand-authored registry** — sufficiency flip 1.00 vs matched-random null ≈ 0,
+   specificity cos < 0.16. The LLM is a *capable* probe designer, not just a router.
+
+2. **Real design judgment.** It adopted a coherent **TUM-anchored** framing (immune,
+   stroma, necrosis, mucin, normal all contrasted *against tumor*) — arguably a better
+   fit for "characterize the TME" than the registry's mixed NORM/MUS foils — produced
+   **4 novel valid axes the registry lacks** (STR·TUM desmoplasia, DEB·TUM necrosis,
+   MUC·TUM, ADI·STR), and **avoided the degenerate BACK / tissue-vs-empty contrast**
+   unprompted. This is the expressiveness win, with no human authoring.
+
+3. **The gate is load-bearing — this is the whole safety story.** Both rejects were
+   `STR v LYM` (a "stromal-vs-immune / immune-exclusion" phenotype) with a **perfect
+   AUROC of 1.000**, yet the gate killed them on **intensity_r = 0.646 > 0.60**: that
+   separation rides the CLS-norm staining/brightness proxy, not clean biology. A naive
+   reader trusts a 1.0-AUROC probe; the gate says *no*. **Without the intensity guard a
+   confounded probe would have been certified.**
+
+## Implication for the build
+
+**Adding agent probe design is good — but only behind the existing gate.** Recommendation:
+wire `probe_design` behind the `ContrastSet` interface as an **optional design mode** for
+questions/concepts the registry doesn't cover, keep the hand-authored registry as the
+trusted default, and **print each agent-proposed probe's gate verdict on the card** so a
+rejected axis is visible, not silent. Caveats unchanged: `necessity_z` stays a
+divide-by-≈0 artifact on these perfectly-separable classes (sufficiency + gate +
+specificity carry the verdict), and single-source data keeps the **confound gate
+UNCHECKED** — agent design widens *coverage*, it does not answer real-biology-vs-batch.
