@@ -67,16 +67,111 @@ def layered_curve(model_key="phikon_v2", split="train", pos="TUM", neg="LYM",
     }
 
 
-def necessity_curve(model_key, pos="TUM", neg="LYM", layers=None, n_null=200, seed=0):
-    """TRUE source-intervention necessity (edit @ layer L, propagate to readout).
+def live_necessity(model_key, images, image_labels, class_names, pos="TUM", neg="LYM",
+                   ref_images=None, ref_labels=None, split="train", n_null=30, seed=0,
+                   readout_pos=None, readout_neg=None, artifacts_dir=None, encoder=None):
+    """TRUE source-intervention necessity: edit @ layer L on THIS tile's forward pass,
+    propagate to the readout, measure the effect vs a matched-random null.
 
-    NOT YET IMPLEMENTED (track #3): needs live forward hooks, not cached features.
-    Use layered_curve() for the cached layer-resolved stand-in.
+    For each configured layer L we derive the concept axis at L (diff-of-means on this
+    run's hidden states), hook the block that produces hidden_states[L], project that
+    axis out of the CLS token, and let L+1..final RECOMPUTE. We then read the readout
+    probe's decision MARGIN (not saturating probability) on the readout-positive tiles
+    and measure how much the concept ablation drops it vs matched-random ablations.
+
+    The readout probe is fit LIVE on `ref_images` (same representation as the
+    intervened forward pass — avoids the cached-npz representation mismatch). Passing a
+    reference set disjoint from `images` keeps it non-circular; without one we fall back
+    to the cached probe and flag the mismatch risk.
+
+    readout_pos/neg override the SCORED concept (default = the ablated concept) — set a
+    different pair for the ablate-A-score-B cross-interference variant. Sets
+    intervened_on_input=True: the certificate's per-slide causal claim.
     """
-    raise NotImplementedError(
-        "necessity_curve: live source-intervention (hook encoder.layer[L], edit "
-        "activations, propagate to readout) not built yet — track #3. "
-        "layered_curve() is the cached stand-in.")
+    from . import live as _live
+    from . import probe as _probe
+
+    kw = {} if artifacts_dir is None else {"artifacts_dir": artifacts_dir}
+    cls_list = list(class_names)
+    rpos, rneg = (readout_pos or pos), (readout_neg or neg)
+    image_labels = np.asarray(image_labels)
+    enc = encoder or _live.LiveEncoder(model_key)
+
+    # Readout probe — live-fit on reference tiles (matched representation) preferred.
+    if ref_images is not None:
+        ref_labels = np.asarray(ref_labels)
+        rp, rn = cls_list.index(rpos), cls_list.index(rneg)
+        rmask = (ref_labels == rp) | (ref_labels == rn)
+        Xref = enc.embed([ref_images[i] for i in np.where(rmask)[0]])
+        rfit = _probe.fit_probe(Xref, (ref_labels[rmask] == rp).astype(int), seed=seed)
+        probe_source = "live_reference_fit"
+    else:
+        feats_r, lab_r, cn_r, _ = loader.load(model_key, split, **kw)
+        Xr, yr = _probe.select_pair(feats_r, lab_r, cn_r, rpos, rneg)
+        rfit = _probe.fit_probe(Xr, yr, seed=seed)
+        probe_source = "cached_probe(representation_mismatch_risk)"
+
+    def margin(cls):  # signed distance toward readout-pos (graded, non-saturating)
+        return rfit["clf"].decision_function(rfit["scaler"].transform(cls))
+
+    rpos_idx = cls_list.index(rpos)
+    watch = image_labels == rpos_idx
+    pos_idx, neg_idx = cls_list.index(pos), cls_list.index(neg)
+    pn = (image_labels == pos_idx) | (image_labels == neg_idx)
+    if watch.sum() == 0 or (image_labels == pos_idx).sum() < 2 or (image_labels == neg_idx).sum() < 2:
+        return {"status": "insufficient_tiles", "intervened_on_input": True,
+                "note": f"need >=2 {pos} and >=2 {neg} tiles for the axis, and >=1 {rpos} to watch"}
+
+    clean_readout, clean_hidden = enc.hidden_cls(images)   # (N,dim), (N,n_blocks+1,dim)
+    m0 = margin(clean_readout)                             # post-LN readout, matches probe
+    base = float(m0[watch].mean())
+
+    layer_names = list(config.LAYER_NAMES)
+    layer_idx = list(config.MODELS[model_key]["layers"])   # hidden_states indices
+    curve = []
+    for name, L in zip(layer_names, layer_idx):
+        Xp = clean_hidden[pn, L, :]
+        cdir = _probe.diff_of_means(Xp, (image_labels[pn] == pos_idx).astype(int))
+        block_idx = L - 1                                   # hidden_states[L] = block[L-1] output
+
+        mc = margin(enc.embed(images, edit=_live.project_out(cdir), block_idx=block_idx))
+        R = _probe.matched_random_dirs(cdir.shape[0], n_null, seed=seed)
+        mr = np.array([margin(enc.embed(images, edit=_live.project_out(r),
+                                        block_idx=block_idx)) for r in R])   # (n_null, N)
+
+        concept_drop = float((m0[watch] - mc[watch]).mean())
+        null_drops = (m0[watch][None, :] - mr[:, watch]).mean(axis=1)        # (n_null,)
+        n_mean, n_std = float(null_drops.mean()), float(null_drops.std())
+        gap = concept_drop - n_mean            # >0 => concept ablation bites harder than random
+        z = gap / (n_std + 1e-9)
+        curve.append({
+            "layer": name, "block_idx": block_idx,
+            "base_margin": round(base, 3),
+            "concept_ablation_drop": round(concept_drop, 3),
+            "random_ablation_drop_mean": round(n_mean, 3),
+            "random_ablation_drop_std": round(n_std, 3),
+            "necessity_gap": round(gap, 3),
+            "gap_vs_null_z": round(z, 2),
+            "bites": bool(gap > 0 and z >= 1.645),
+        })
+    return {
+        "status": "live_source_intervention",
+        "intervened_on_input": True,
+        "model": model_key, "readout_probe": probe_source,
+        "ablated_concept": f"{pos}_vs_{neg}",
+        "scored_concept": f"{rpos}_vs_{rneg}",
+        "cross_interference": (rpos, rneg) != (pos, neg),
+        "n_tiles": int(len(images)), "n_watched": int(watch.sum()), "n_null": n_null,
+        "curve": curve,
+        "note": ("edit @ layer L on the real forward pass, propagated to readout "
+                 "(margin drop vs matched-random null). Small mid-layer gap => concept "
+                 "recomputed downstream (redundancy/Hydra); a real per-slide causal read."),
+    }
+
+
+def necessity_curve(*a, **k):
+    """Back-compat alias — live source intervention is `live_necessity`."""
+    return live_necessity(*a, **k)
 
 
 def pending_report(model_key="phikon_v2", split="train", pos="TUM", neg="LYM",

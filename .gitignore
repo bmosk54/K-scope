@@ -8,3 +8,4 @@ artifacts/
 *.npy
 *.pt
 s3inline.json
+Eddie.md

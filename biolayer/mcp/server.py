@@ -36,6 +36,85 @@ def hypothesis(track: str = "phikon", split: str = "train") -> dict:
 
 
 @mcp.tool()
+def certify_answer(prompt: str, answer: str, track: str = "phikon",
+                   split: str = "train", n_null: int = 200, fast: bool = False,
+                   explain: bool = False) -> dict:
+    """Certify a free-form K-Pro answer, claim by claim (dynamic answer-bound probes).
+
+    Decomposes the answer into atomic concept-claims, resolves each to a labeled
+    contrast on the substrate (declining claims with no label as NOT_CERTIFIABLE),
+    and runs the full do()-battery + matched-random null + specificity + confound
+    gate + held-out validation per claim, with Holm-Bonferroni correction across
+    claims. Returns numeric per-pillar scores (necessity/sufficiency/specificity)
+    and a GROUNDED/WEAK/NULL verdict per claim, each with a deterministic per-claim
+    reasoning_trace (numbers + why). `fast=True` skips the layer sweep; `explain=True`
+    adds a plain-English narration in one extra batched LLM call.
+    """
+    return verbs.certify_answer(prompt, answer, track=track, split=split,
+                                n_null=n_null, fast=fast, explain=explain)
+
+
+@mcp.tool()
+def design(question: str, model: str = "phikon_v2", split: str = "train",
+           track: str = None, max_probes: int = 8, certify_each: bool = False,
+           n_null: int = 200) -> dict:
+    """Let Sonnet DESIGN a causal probe battery for a free-form pathology question, then
+    optionally certify each proposed probe (generate-then-certify).
+
+    The LLM only proposes (pos, neg, distractor) contrasts over the substrate's real tissue
+    classes; the deterministic battery decides certifiability, so an ill-posed probe is
+    never certified. This is the generative counterpart to the static `hypothesis` verb.
+    Set `certify_each=True` to run the full evidence card for every proposed probe.
+    """
+    return verbs.design(question, model, split, track=track, max_probes=max_probes,
+                        certify_each=certify_each, n_null=n_null)
+
+
+@mcp.tool()
+def rehypothesize(model: str = "phikon_v2", split: str = "train",
+                  pos: str = "TUM", neg: str = "LYM", n_null: int = 200,
+                  track: str = None) -> dict:
+    """Close the certify loop: certify a concept, read its SCORE + REASONING TRACE, and have
+    Sonnet propose the NEXT hypothesis + a concrete follow-up probe + a message to feed
+    downstream to K-Pro or another Claude.
+
+    Turns a single evidence card into the next iteration: certify -> (score + trace) ->
+    Claude -> next_hypothesis -> feed to K-Pro/Claude -> certify. The proposed probe is
+    validated against real classes; the battery still decides certifiability.
+    """
+    return verbs.rehypothesize(model, split, pos, neg, n_null=n_null, track=track)
+
+
+@mcp.tool()
+def steer_from_card(model: str = "phikon_v2", split: str = "train",
+                    pos: str = "TUM", neg: str = "LYM", alpha: float = None,
+                    track: str = None, x: list = None) -> dict:
+    """Zero-recompute sufficiency: steer features toward `pos` using ONLY the direction
+    handles a prior `certify` persisted (no probe refit — the card's reuse path).
+
+    Pass raw CLS feature rows in `x`, or omit `x` to steer the split's `neg`-class rows as a
+    self-contained demo and report the flip-to-pos rate. Run `certify` first to persist the
+    handles.
+    """
+    return verbs.steer_from_card(x=x, model=model, split=split, pos=pos, neg=neg,
+                                 alpha=alpha, track=track)
+
+
+@mcp.tool()
+def ablate_from_card(model: str = "phikon_v2", split: str = "train",
+                     pos: str = "TUM", neg: str = "LYM", track: str = None,
+                     x: list = None) -> dict:
+    """Zero-recompute necessity: project the concept axis out using ONLY the direction
+    handles a prior `certify` persisted (no probe refit — the card's reuse path).
+
+    Pass raw CLS feature rows in `x`, or omit `x` to ablate the split's `pos`-class rows and
+    report how many still read as `pos` (necessity: this should drop). Run `certify` first.
+    """
+    return verbs.ablate_from_card(x=x, model=model, split=split, pos=pos, neg=neg,
+                                  track=track)
+
+
+@mcp.tool()
 def probe(model: str = "phikon_v2", split: str = "train",
           pos: str = "TUM", neg: str = "LYM") -> dict:
     """Derive the concept direction and report linear-probe separability."""

@@ -44,6 +44,33 @@ IMAGE_COLUMN = "image"
 LABEL_COLUMN = "label"
 
 # ---------------------------------------------------------------------------
+# HistoPLUS cell-type substrate (expands the certifiable vocabulary past tissue)
+# ---------------------------------------------------------------------------
+# Owkin HistoPLUS (github.com/owkin/histoplus, CellViT on H0-mini) detects +
+# classifies nuclei into 13 pan-cancer cell types. We treat each cell type as a
+# label source on the H0-mini substrate: embed the nucleus crop with H0-mini, take
+# HistoPLUS's class as the label, then the same causal battery runs on it. Labels
+# live natively in H0-mini's space — no VLM/text tower needed.
+#   embeddings/histoplus_celltype/h0_mini/<split>.npz  (feats (N,768), labels, class_names)
+HISTOPLUS_SLUG = "histoplus_celltype"
+# order = HistoPLUS class index; short codes used as label names in the npz.
+HISTOPLUS_CLASSES = [
+    "CANCER",   # cancer / malignant epithelium
+    "EPI",      # non-cancerous epithelium
+    "LYM",      # lymphocyte
+    "PLASMA",   # plasmocyte
+    "NEU",      # neutrophil
+    "EOS",      # eosinophil
+    "MAC",      # macrophage
+    "FIB",      # fibroblast
+    "SMC",      # smooth muscle cell
+    "ENDO",     # endothelial cell
+    "RBC",      # red blood cell
+    "MITOSIS",  # mitotic figure
+    "APOP",     # apoptotic body
+]
+
+# ---------------------------------------------------------------------------
 # Multi-layer, local + global extraction
 # ---------------------------------------------------------------------------
 # Every encoder is probed at THREE depths, and at each depth we keep BOTH the

@@ -20,6 +20,29 @@ confound controls.
 
 ## Current scope decision
 
+**Core question the demo answers: _"Characterize the tumor microenvironment."_** This is
+the TME-characterization sweet spot: it decomposes (via the Sonnet-4.6 agent step) into
+exactly the tissue concepts certify grounds today — tumor epithelium, stroma, immune
+infiltrate (LYM-vs-TUM), necrosis, mucus — so every sub-claim earns a real
+probe + matched-null + specificity verdict instead of a NOT_CERTIFIABLE. Scope it
+**per-prediction / per-slide**, not literally "in this cohort": certify is tile-level and
+single-source, so it emits per-claim causal verdicts, *not* cohort survival/response
+statistics. Reserve the "cohort" framing for the **confound gate** (is this TME signal
+real biology or a site/batch artifact?) — and only once multi-site data is wired.
+
+**Out of scope for `certify`** (route to another verb or decline — verified against the
+Sonnet-4.6 test, [Eddie.md](Eddie.md)):
+- *Clinical-outcome / biomarker questions* (immunotherapy response, biomarker-for-drug,
+  survival correlation, stratify-by-phenotype) — certify never touches outcome labels;
+  they resolve NOT_CERTIFIABLE, exactly like MSI-H did in the test.
+- *Spatial questions* (immune-inflamed vs -excluded vs -desert, tertiary lymphoid
+  structures, tumor↔immune spatial relationship) — no spatial capability on tile-level
+  CLS; certify can only assert immune *presence*, not the spatial split.
+- *Cell-population dominance* (LYM / NEU / MAC) — the registry has these concepts but the
+  HistoPLUS `h0_mini` embeddings don't exist yet; aspirational, unlocks with extraction.
+- *Mechanistic "why"* (therapy resistance, CAF activation, hypothesis generation) — that
+  is the `hypothesis` verb, not `certify`.
+
 **Ship one MCP verb well: `certify(prediction) → evidence card`.** Sub-verbs: `probe`,
 `ablate` (necessity + matched-random null), `specificity` (distractor ablation),
 `confound` (Kömen-style site-probe on the causal axis), optional caveated `steer`

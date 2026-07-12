@@ -17,47 +17,51 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 ARTIFACTS_DIR = os.path.join(_REPO_ROOT, "artifacts")
 
 
-def local_npz_path(model_key, split, artifacts_dir=ARTIFACTS_DIR):
-    return os.path.join(artifacts_dir, config.embeddings_key(model_key, split))
+def local_npz_path(model_key, split, artifacts_dir=ARTIFACTS_DIR, dataset_slug=None):
+    slug = dataset_slug or config.DATASET_SLUG
+    return os.path.join(artifacts_dir, config.embeddings_key(model_key, split, slug))
 
 
-def _open(model_key, split, artifacts_dir=ARTIFACTS_DIR):
+def _open(model_key, split, artifacts_dir=ARTIFACTS_DIR, dataset_slug=None):
     """Return (npz_dict, source). Local mirror first, then S3."""
-    path = local_npz_path(model_key, split, artifacts_dir)
+    slug = dataset_slug or config.DATASET_SLUG
+    path = local_npz_path(model_key, split, artifacts_dir, slug)
     if os.path.exists(path):
         return np.load(path, allow_pickle=True), f"local:{path}"
     # Fall back to the shared bucket (needs the S3 role fix — see SETUP.md).
     import io
 
     from . import s3_utils
-    key = config.embeddings_key(model_key, split)
+    key = config.embeddings_key(model_key, split, slug)
     buf = io.BytesIO()
     s3_utils.s3().download_fileobj(config.BUCKET, key, buf)
     buf.seek(0)
     return np.load(buf, allow_pickle=True), f"s3://{config.BUCKET}/{key}"
 
 
-def load(model_key="phikon_v2", split="train", artifacts_dir=ARTIFACTS_DIR):
+def load(model_key="phikon_v2", split="train", artifacts_dir=ARTIFACTS_DIR,
+         dataset_slug=None):
     """Return (feats, labels, class_names, source) — readout global (back-compat)."""
-    d, source = _open(model_key, split, artifacts_dir)
+    d, source = _open(model_key, split, artifacts_dir, dataset_slug)
     return d["feats"], d["labels"], list(d["class_names"]), source
 
 
-def available_layers(model_key="phikon_v2", split="train", artifacts_dir=ARTIFACTS_DIR):
-    d, _ = _open(model_key, split, artifacts_dir)
+def available_layers(model_key="phikon_v2", split="train", artifacts_dir=ARTIFACTS_DIR,
+                     dataset_slug=None):
+    d, _ = _open(model_key, split, artifacts_dir, dataset_slug)
     if "layer_names" in d:
         return list(d["layer_names"])
     return ["readout"]  # old single-layer npz
 
 
 def load_layer(model_key="phikon_v2", split="train", layer="readout",
-               space="global", artifacts_dir=ARTIFACTS_DIR):
+               space="global", artifacts_dir=ARTIFACTS_DIR, dataset_slug=None):
     """Return (X (N,dim), labels, class_names, source) at one layer + space.
 
     space: "global" (CLS) | "local" (mean patch). Falls back to the back-compat
     `feats` array for old single-layer npz files (readout/global only).
     """
-    d, source = _open(model_key, split, artifacts_dir)
+    d, source = _open(model_key, split, artifacts_dir, dataset_slug)
     labels, class_names = d["labels"], list(d["class_names"])
 
     key = {"global": "globals", "local": "locals"}[space]
