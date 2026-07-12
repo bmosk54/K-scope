@@ -26,7 +26,10 @@ import tempfile
 
 import numpy as np
 
-from .wsi_reader import open_wsi
+try:
+    from .wsi_reader import open_wsi           # package module
+except ImportError:
+    from wsi_reader import open_wsi            # standalone (bundled in a container)
 
 
 # ---------------------------------------------------------------------------
