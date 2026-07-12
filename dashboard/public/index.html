@@ -26,6 +26,7 @@
       <div class="nav-item" data-view="proof"><span class="nav-idx">03</span><span>Proof</span></div>
       <div class="nav-item" data-view="verdict"><span class="nav-idx">04</span><span>Verdict</span></div>
       <a class="nav-item nav-link" href="intervene.html"><span class="nav-idx">05</span><span>Intervention Studio</span><span class="nav-ext">↗</span></a>
+      <div class="nav-item" data-view="research"><span class="nav-idx">06</span><span>AutoResearch</span></div>
     </div>
 
     <div class="sidebar-foot">
@@ -43,10 +44,6 @@
         <div class="topbar-title" id="topbar-title">Case</div>
         <div class="topbar-tag" id="topbar-tag">one claim, followed end to end</div>
       </div>
-      <div class="topbar-right">
-        <div class="substrate-label" id="substrate-label">phikon-v2 · ViT-L/24 · frozen</div>
-        <button class="btn-run" id="btn-run">Run certify_answer()</button>
-      </div>
     </div>
 
     <!-- ============================== INFERENCE CONSOLE (slide -> answer -> certify) -->
@@ -59,7 +56,7 @@
         </div>
         <div class="io-col">
           <div class="col-label">Prompt</div>
-          <textarea id="c-prompt" class="io-prompt">Describe cancer cells, tumor-infiltrating lymphocytes, plasma cells, and mitotic figures at the invasive margin.</textarea>
+          <textarea id="c-prompt" class="io-prompt">Give a full diagnostic assessment: tumor grade and mitotic activity, the cellular immune infiltrate, invasive features, and molecular and staging status.</textarea>
           <div class="io-row">
             <select id="c-track">
               <option value="phikon">phikon-v2 (1024-d)</option>
@@ -70,7 +67,7 @@
             <span class="console-status" id="c-status"></span>
           </div>
           <div class="col-label">K-Pro answer <span class="dimlabel">(Claude, inferred from the slide)</span></div>
-          <textarea id="c-answer" class="io-answer" placeholder="Submit the slide + prompt to generate the K-Pro answer…"></textarea>
+          <textarea id="c-answer" class="io-answer" placeholder="Submit the slide + prompt to generate the K-Pro answer…">Moderately differentiated adenocarcinoma with malignant glandular cells and frequent mitotic figures in desmoplastic stroma. A brisk tumor-infiltrating lymphocytic infiltrate with admixed plasma cells is present. There is perineural invasion and the tumor is staged pT3N1. The lesion is high-grade and microsatellite-instability-high with a BRAF V600E mutation, portending a poor five-year prognosis.</textarea>
           <div class="io-row">
             <label class="dimlabel"><input type="checkbox" id="c-bedrock" checked> Bedrock decompose</label>
             <button id="c-certify">Run certify →</button>
@@ -85,6 +82,7 @@
           </div>
         </div>
       </div>
+      <div class="c-trace" id="c-trace" hidden></div>
       <pre class="console-out" id="c-out"></pre>
     </div>
 
@@ -137,7 +135,7 @@
             <div class="aflow-head-left">
               <span class="aflow-chip">02</span>
               <div>
-                <div class="aflow-title">One answer, twelve claims, one honest split</div>
+                <div class="aflow-title" id="aflow-title">One answer, twelve claims, one honest split</div>
                 <div class="aflow-sub">Every atomic claim the K-Pro answer makes flows through a concept axis to a verdict. Declined claims are a feature, not a bug.</div>
               </div>
             </div>
@@ -209,6 +207,94 @@
         </details>
       </div>
 
+      <!-- ===================================================== AUTORESEARCH -->
+      <div class="view" id="view-research">
+
+        <!-- controls -->
+        <div class="rr-controls">
+          <div class="rr-ctrl-main">
+            <textarea id="rr-problem" class="rr-problem" rows="2">Characterize the tumor microenvironment.</textarea>
+            <div class="rr-ctrl-row">
+              <select id="rr-track">
+                <option value="phikon">phikon-v2</option>
+                <option value="h0">H-optimus-0</option>
+              </select>
+              <label class="rr-num">iters <input type="number" id="rr-iters" value="5" min="1" max="12"></label>
+              <label class="rr-check"><input type="checkbox" id="rr-bedrock"> Sonnet propose</label>
+              <label class="rr-check"><input type="checkbox" id="rr-live"> live circuit</label>
+              <button id="rr-start" class="rr-start">▶ Run loop</button>
+              <button id="rr-stop" class="rr-stop" disabled>■ Stop</button>
+              <div class="rr-status" id="rr-status">idle</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ======= pipeline visualization: the autonomous discovery loop ======= -->
+        <div class="rr-pipeline" id="rr-pipeline">
+          <div class="rr-pipe-track">
+            <div class="rr-stage" data-stage="probe">
+              <div class="rr-stage-node"><span class="rr-stage-idx">1</span><span class="rr-stage-glyph">◎</span></div>
+              <div class="rr-stage-name">probe</div>
+              <div class="rr-stage-desc">design a concept axis + matched-random null</div>
+              <div class="rr-stage-val" id="rr-stage-probe">—</div>
+            </div>
+            <div class="rr-conn"><span class="rr-conn-flow"></span></div>
+            <div class="rr-stage" data-stage="certify">
+              <div class="rr-stage-node"><span class="rr-stage-idx">2</span><span class="rr-stage-glyph">✓</span></div>
+              <div class="rr-stage-name">certify</div>
+              <div class="rr-stage-desc">necessity × sufficiency × specificity</div>
+              <div class="rr-stage-val" id="rr-stage-certify">—</div>
+            </div>
+            <div class="rr-conn"><span class="rr-conn-flow"></span></div>
+            <div class="rr-stage" data-stage="locate">
+              <div class="rr-stage-node"><span class="rr-stage-idx">3</span><span class="rr-stage-glyph">⌖</span></div>
+              <div class="rr-stage-name">locate</div>
+              <div class="rr-stage-desc">where in the stack the circuit lives</div>
+              <div class="rr-stage-val" id="rr-stage-locate">—</div>
+            </div>
+            <div class="rr-conn"><span class="rr-conn-flow"></span></div>
+            <div class="rr-stage" data-stage="ablate">
+              <div class="rr-stage-node"><span class="rr-stage-idx">4</span><span class="rr-stage-glyph">⊘</span></div>
+              <div class="rr-stage-name">ablate</div>
+              <div class="rr-stage-desc">knock out the axis, measure the gap</div>
+              <div class="rr-stage-val" id="rr-stage-ablate">—</div>
+            </div>
+            <div class="rr-conn"><span class="rr-conn-flow"></span></div>
+            <div class="rr-stage" data-stage="reflect">
+              <div class="rr-stage-node"><span class="rr-stage-idx">5</span><span class="rr-stage-glyph">↺</span></div>
+              <div class="rr-stage-name">reflect</div>
+              <div class="rr-stage-desc">diagnose, propose the next probe</div>
+              <div class="rr-stage-val" id="rr-stage-reflect">—</div>
+            </div>
+          </div>
+          <div class="rr-loopback" id="rr-loopback">
+            <span class="rr-loopback-line"></span>
+            <span class="rr-loopback-label">refine hypothesis &amp; repeat</span>
+          </div>
+        </div>
+
+        <!-- ======= reasoning trace: live CLI stream of the loop's thinking ======= -->
+        <div class="rr-cli" id="rr-cli">
+          <div class="rr-cli-bar">
+            <span class="rr-cli-dot r"></span><span class="rr-cli-dot y"></span><span class="rr-cli-dot g"></span>
+            <span class="rr-cli-title">autoresearch — reasoning trace</span>
+            <span class="rr-cli-meta" id="rr-cli-meta">idle</span>
+          </div>
+          <div class="rr-cli-body" id="rr-cli-body">
+            <div class="rr-cli-line dim">$ autoresearch --loop &nbsp;<span class="rr-cli-cursor">▋</span></div>
+          </div>
+        </div>
+
+        <!-- discovered circuit, aggregated across iterations -->
+        <div class="rr-circuit-summary" id="rr-circuit-summary" hidden>
+          <div class="rr-sec-label">Discovered causal circuit <span class="rr-mode" id="rr-circuit-mode"></span></div>
+          <div id="rr-circuit-agg"></div>
+        </div>
+
+        <!-- per-iteration feed -->
+        <div class="rr-feed" id="rr-feed"></div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -217,5 +303,6 @@
 
 <script src="data.js"></script>
 <script src="app.js"></script>
+<script src="research.js"></script>
 </body>
 </html>

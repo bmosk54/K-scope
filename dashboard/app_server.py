@@ -24,13 +24,14 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response
 
 # warm imports — pay the torch/biolayer cost ONCE, here, not per request
 import bridge  # dashboard/bridge.py (adapters + build_*)
 from biolayer.mcp import verbs
 from biolayer import tracks as _tracks
 from biolayer.dynamic import bedrock as _bedrock
+from biolayer.dynamic import autoresearch as _autoresearch
 
 PUBLIC = os.path.join(HERE, "public")
 app = Flask(__name__, static_folder=None)
@@ -189,6 +190,41 @@ def api_optimize():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": f"{type(e).__name__}: {e}"}), 503
+
+
+@app.route("/api/autoresearch")
+def api_autoresearch():
+    """Stream the autonomous causal-circuit discovery loop as Server-Sent Events.
+
+    One SSE `data:` frame per iteration (design -> certify -> locate causal layer ->
+    ablate -> reflect -> next), then a final `{done:true}` frame. GET so the browser's
+    EventSource can drive it; the loop runs entirely on the existing certify battery.
+    """
+    def _int(name, default, lo, hi):
+        try:
+            return max(lo, min(int(request.args.get(name, default)), hi))
+        except (TypeError, ValueError):
+            return default
+
+    problem = request.args.get("problem", DEFAULT_Q)
+    track = request.args.get("track", "phikon")
+    iters = _int("iters", 5, 1, 12)
+    n_null = _int("n_null", 60, 20, 300)
+    bedrock = request.args.get("bedrock", "0") in ("1", "true", "True")
+    live = request.args.get("live", "0") in ("1", "true", "True")
+
+    def gen():
+        try:
+            for rec in _autoresearch.iterate(problem, track=track, max_iters=iters,
+                                             n_null=n_null, use_bedrock=bedrock, live=live):
+                yield f"data: {json.dumps(rec, default=str)}\n\n"
+        except Exception as e:
+            traceback.print_exc()
+            yield f"event: error\ndata: {json.dumps({'error': f'{type(e).__name__}: {e}'})}\n\n"
+
+    return Response(gen(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                             "Connection": "keep-alive"})
 
 
 @app.route("/")

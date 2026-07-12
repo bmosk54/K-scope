@@ -89,8 +89,9 @@
     const v = document.getElementById("strip-verdict");
     v.className = "strip-verdict " + claim.verdict;
     v.textContent = claim.verdict;
-    document.getElementById("strip-declined").textContent =
-      `+ ${declinedCount} declined (cell/subcellular — needs HistoPLUS)`;
+    // Caption reflects the actual declines, not a hardcoded "cell/subcellular" assumption.
+    const declEl = document.getElementById("strip-declined");
+    declEl.textContent = declinedCount ? `+ ${declinedCount} declined` : "";
   }
 
   function selectClaim(idx) {
@@ -151,68 +152,15 @@
     return { centers, blobs, nuclei, stromaCells, lymphs };
   })();
 
-  function heatAt(x, y, claim) {
-    const c = TISSUE_LAYOUT.centers;
-    const glandField = Math.max(...c.map((g) => Math.exp(-Math.pow(Math.hypot(x - g.x, y - g.y) / g.r, 2) * 1.4)));
-    if (!claim || !claim.scores) return 0;
-    switch (claim.concept) {
-      case "tumor_epithelium":
-        return glandField;
-      case "normal_mucosa":
-        return Math.max(0, 1 - glandField * 1.35);
-      case "immune_infiltrate": {
-        const rand = mulberry32(hashStr(claim.id + "heat"));
-        let s = 0;
-        for (let i = 0; i < 10; i++) {
-          const bx = rand(), by = rand();
-          s = Math.max(s, Math.exp(-Math.pow(Math.hypot(x - bx, y - by) / 0.09, 2)));
-        }
-        return Math.max(s, glandField * 0.18);
-      }
-      case "stroma":
-        return glandField * (1 - glandField) * 4.2;
-      default:
-        return 0;
-    }
-  }
-
-  // Grounded, not invented: reconstructs the same intermediate quantities heatAt()
-  // used, so "why is this pixel hot" always matches what's actually drawn.
-  function explainPatch(x, y, claim) {
-    const c = TISSUE_LAYOUT.centers;
-    let nearest = 0, bestD = Infinity;
-    c.forEach((g, i) => {
-      const d = Math.hypot(x - g.x, y - g.y) / g.r;
-      if (d < bestD) { bestD = d; nearest = i; }
-    });
-    const glandField = Math.max(...c.map((g) => Math.exp(-Math.pow(Math.hypot(x - g.x, y - g.y) / g.r, 2) * 1.4)));
-
-    switch (claim.concept) {
-      case "tumor_epithelium":
-        return `inside tumor nest #${nearest + 1}, gland-field ${glandField.toFixed(2)}`;
-      case "normal_mucosa":
-        return `gland-field ${glandField.toFixed(2)} (low = ordered mucosa, not neoplasia)`;
-      case "immune_infiltrate": {
-        const rand = mulberry32(hashStr(claim.id + "heat"));
-        let bestHot = Infinity;
-        for (let i = 0; i < 10; i++) {
-          const bx = rand(), by = rand();
-          bestHot = Math.min(bestHot, Math.hypot(x - bx, y - by));
-        }
-        return bestHot < 0.09
-          ? `inside a lymphocyte aggregate, ${bestHot.toFixed(2)} grid-units from center`
-          : `outside any lymphocyte aggregate (${bestHot.toFixed(2)} away) — faint gland-border baseline`;
-      }
-      case "stroma": {
-        const border = glandField * (1 - glandField) * 4.2;
-        return `tumor–gland boundary, interface score ${border.toFixed(2)}`;
-      }
-      default:
-        return "no heat model wired for this concept";
-    }
-  }
-
-  let selectedPatch = null;
+  // NOTE: the Case tissue render is a MEASURED per-patch causal heatmap, precomputed by
+  // dashboard/precompute_heatmaps.py. For a real NCT-CRC tile we re-forward it through
+  // frozen Phikon-v2, capture the 14x14 patch-token grid at the readout layer (the grid
+  // models.py normally mean-pools away), project each patch onto the concept axis, and
+  // z-score that projection against a matched-random-direction null (Section-5-D control).
+  // window.HEATMAPS[concept] = { tile, z_grid 14x14, norm_grid, top_z, verdict, ... }.
+  // Concepts with no substrate (declined claims) get an honest "no map" panel — never a
+  // fabricated schematic.
+  let overlayOn = true;
 
   function renderReadoutStatic(claim) {
     const el = document.getElementById("readout-static");
@@ -222,156 +170,157 @@
       ["specificity", claim.scores.specificity],
     ];
     const cv = claim.contrast_validation;
+    const num = (v, d) => (typeof v === "number" ? v.toFixed(d) : "—");
     el.innerHTML =
-      `<div class="ro-group"><div class="ro-label">Axis</div><div class="ro-axis-value">${claim.contrast}</div></div>` +
+      `<div class="ro-group"><div class="ro-label">Axis</div><div class="ro-axis-value">${claim.contrast || "—"}</div></div>` +
       `<div class="ro-group"><div class="ro-label">Causal pillars</div>` +
       pillars
         .map(
           ([name, v]) =>
-            `<div class="ro-pillar"><div class="ro-pillar-name">${name}</div><div class="ro-pillar-track"><div class="ro-pillar-fill" style="width:${pct(v, 0)};background:${COLOR[claim.verdict]}"></div></div><div class="ro-pillar-value">${v.toFixed(3)}</div></div>`
+            `<div class="ro-pillar"><div class="ro-pillar-name">${name}</div><div class="ro-pillar-track"><div class="ro-pillar-fill" style="width:${pct(v, 0)};background:${COLOR[claim.verdict]}"></div></div><div class="ro-pillar-value">${num(v, 3)}</div></div>`
         )
         .join("") +
       `</div>` +
-      `<div class="ro-group"><div class="ro-label">Contrast gate</div>` +
-      `<div class="ro-gate-row"><span class="badge ${cv.valid ? "PASS" : "CAPPED"}">${cv.valid ? "PASS" : "CAPPED"}</span><span class="ro-gate-detail">AUROC ${cv.heldout_auroc.toFixed(3)} · |r| ${cv.intensity_collinearity.toFixed(3)} (cap 0.60)</span></div>` +
-      (cv.warnings.length ? `<div class="ro-gate-warn">⚠ ${cv.warnings.join("; ")}</div>` : "") +
-      `</div>`;
+      // contrast_validation is optional on live claims — degrade to a neutral row, never throw.
+      (cv
+        ? `<div class="ro-group"><div class="ro-label">Contrast gate</div>` +
+          `<div class="ro-gate-row"><span class="badge ${cv.valid ? "PASS" : "CAPPED"}">${cv.valid ? "PASS" : "CAPPED"}</span><span class="ro-gate-detail">AUROC ${num(cv.heldout_auroc, 3)} · |r| ${num(cv.intensity_collinearity, 3)} (cap 0.60)</span></div>` +
+          ((cv.warnings && cv.warnings.length) ? `<div class="ro-gate-warn">⚠ ${cv.warnings.join("; ")}</div>` : "") +
+          `</div>`
+        : "");
   }
 
-  function renderReadoutLive(claim, patch) {
+  // The real reasoning trace certify emitted for this claim — every battery step, verbatim.
+  // Replaces the old fabricated per-patch readout (seeded-random field + hashed neuron #),
+  // which implied a spatial signal the pooled-CLS substrate does not have.
+  function renderReasoningTrace(claim) {
     const el = document.getElementById("readout-live");
-    if (!patch) {
-      el.innerHTML =
-        `<div class="live-head"><div class="live-title">live patch readout</div></div>` +
-        `<div class="live-empty">Hover the tissue grid — this panel updates in real time with that token's activation, most influential neuron, and a grounded reason.</div>`;
-      return;
-    }
-    const why = explainPatch(patch.xn, patch.yn, claim);
-    const neuron = Math.floor(mulberry32(hashStr(claim.id + ":" + patch.i + "," + patch.j))() * 1024);
+    const trace = (claim.reasoning_trace || []).filter((t) => t.step !== "verdict");
     el.innerHTML =
-      `<div class="live-head"><div class="live-title"><span class="live-dot"></span>live patch readout</div><div class="live-patch-coord">[${patch.i}, ${patch.j}]</div></div>` +
-      `<div class="live-row"><div class="live-row-k">${claim.concept.replace(/_/g, " ")} activation</div><div class="live-row-v accent">${pct(patch.heat, 0)}</div></div>` +
-      `<div class="live-row"><div class="live-row-k">most influential neuron</div><div class="live-row-v">#${neuron}</div></div>` +
-      `<div class="live-row"><div class="live-row-k">layer</div><div class="live-row-v">encoder.layer[16]</div></div>` +
-      `<div class="live-why">${why}</div>`;
+      `<div class="ro-label">Reasoning trace <span class="ro-label-sub">— live from the substrate</span></div>` +
+      (trace.length
+        ? trace
+            .map(
+              (t) =>
+                `<div class="ro-trace-step"><div class="ro-trace-name">${(t.step || "").replace(/_/g, " ")}</div>` +
+                `<div class="ro-trace-obs">${t.observation || ""}</div></div>`
+            )
+            .join("")
+        : `<div class="live-empty">No reasoning trace recorded for this claim.</div>`);
   }
 
   function renderHistology() {
     const claim = currentClaim();
     const container = document.getElementById("tile-stage");
     container.innerHTML = "";
-    const W = 640, H = 460;
-    const svg = d3.select(container).append("svg").attr("viewBox", `0 0 ${W} ${H}`);
+    const hm = claim && claim.concept && (window.HEATMAPS || {})[claim.concept];
+    if (hm) renderCausalMap(container, claim, hm);
+    else renderNoMap(container, claim);
+    renderReadoutStatic(claim);
+    renderReasoningTrace(claim);
+  }
 
-    svg.append("rect").attr("width", W).attr("height", H).attr("fill", "#1b1730");
+  // A real tile + measured per-patch causal heatmap (14x14 patch-projection z vs a
+  // matched-random-direction null). Cold patches are transparent so tissue shows through;
+  // hot patches are the ones whose readout-layer activation carries the concept axis.
+  function renderCausalMap(container, claim, hm) {
+    const S = hm.grid_side || (hm.z_grid || []).length || 14;
+    const CELL = 224 / S;
+    const svg = d3
+      .select(container)
+      .append("svg")
+      .attr("viewBox", "0 0 224 224")
+      .attr("preserveAspectRatio", "xMidYMid meet");
 
-    const line = d3.line().curve(d3.curveCatmullRomClosed.alpha(0.85));
-    TISSUE_LAYOUT.blobs.forEach((b) => {
-      svg
-        .append("path")
-        .attr("d", line(b.pts.map((p) => [p[0] * W, p[1] * H])))
-        .attr("fill", "#332a53")
-        .attr("stroke", "#453a6c")
-        .attr("stroke-width", 1.4);
-    });
+    // the real NCT-CRC tile this map was measured on
+    svg.append("image")
+      .attr("href", apiUrl(hm.tile)).attr("xlink:href", apiUrl(hm.tile))
+      .attr("x", 0).attr("y", 0).attr("width", 224).attr("height", 224);
 
-    svg
-      .selectAll(".stroma-cell")
-      .data(TISSUE_LAYOUT.stromaCells)
-      .join("line")
-      .attr("x1", (d) => d.x * W - Math.cos((d.rot * Math.PI) / 180) * d.len)
-      .attr("y1", (d) => d.y * H - Math.sin((d.rot * Math.PI) / 180) * d.len)
-      .attr("x2", (d) => d.x * W + Math.cos((d.rot * Math.PI) / 180) * d.len)
-      .attr("y2", (d) => d.y * H + Math.sin((d.rot * Math.PI) / 180) * d.len)
-      .attr("stroke", "#5f5390")
-      .attr("stroke-width", 1.1)
-      .attr("stroke-opacity", 0.55);
-
-    svg
-      .selectAll(".nucleus")
-      .data(TISSUE_LAYOUT.nuclei)
-      .join("ellipse")
-      .attr("cx", (d) => d.x * W)
-      .attr("cy", (d) => d.y * H)
-      .attr("rx", (d) => d.rr)
-      .attr("ry", (d) => d.rr * 1.3)
-      .attr("fill", "#8b78e8")
-      .attr("fill-opacity", 0.85);
-
-    svg
-      .selectAll(".lymph")
-      .data(TISSUE_LAYOUT.lymphs)
-      .join("circle")
-      .attr("cx", (d) => d.x * W)
-      .attr("cy", (d) => d.y * H)
-      .attr("r", (d) => d.rr)
-      .attr("fill", "#241f40")
-      .attr("stroke", "#6c8dfb")
-      .attr("stroke-width", 0.6)
-      .attr("fill-opacity", 0.8);
-
-    const cols = 20, rows = 15;
-    const cw = W / cols, ch = H / rows;
-    const cells = [];
-    for (let j = 0; j < rows; j++) {
-      for (let i = 0; i < cols; i++) {
-        const xn = (i + 0.5) / cols, yn = (j + 0.5) / rows;
-        cells.push({ i, j, xn, yn, heat: heatAt(xn, yn, claim) });
+    const g = svg.append("g").attr("class", "hm-overlay").style("display", overlayOn ? null : "none");
+    const norm = hm.norm_grid || [];
+    const MAX_DARK = 0.74;                 // dimmest patch is veiled, never fully black
+    let topR = 0, topC = 0, topV = -1;
+    for (let r = 0; r < S; r++) {
+      for (let c = 0; c < S; c++) {
+        const v = (norm[r] && norm[r][c]) || 0;
+        if (v > topV) { topV = v; topR = r; topC = c; }
+        // spotlight: a patch keeps the tile's REAL color where it aligns with the concept
+        // axis; the less it aligns, the heavier the dark-grey veil (opacity ∝ 1 − importance).
+        g.append("rect")
+          .attr("x", c * CELL).attr("y", r * CELL)
+          .attr("width", CELL + 0.4).attr("height", CELL + 0.4)
+          .attr("fill", "#0b0a12")
+          .attr("fill-opacity", MAX_DARK * (1 - v));
       }
     }
-    const colorScale = d3.interpolateRgb("#5865ff", "#ef6572");
-    const patchLayer = svg.append("g");
-    patchLayer
-      .selectAll("rect")
-      .data(cells)
-      .join("rect")
-      .attr("class", "patch-cell")
-      .attr("x", (d) => d.i * cw)
-      .attr("y", (d) => d.j * ch)
-      .attr("width", cw)
-      .attr("height", ch)
-      .attr("fill", (d) => colorScale(d.heat))
-      .attr("fill-opacity", (d) => 0.08 + d.heat * 0.62)
-      .attr("stroke", "rgba(255,255,255,0.04)")
-      .attr("stroke-width", 1)
-      .style("cursor", "pointer")
-      .on("mouseover", function (event, d) {
-        if (!d3.select(this).classed("is-selected")) d3.select(this).attr("stroke", "rgba(255,255,255,0.35)");
-        showTip(
-          event,
-          `<div class="tt-title">patch [${d.i},${d.j}]</div><div class="tt-row"><span>activation</span><span>${pct(d.heat, 0)}</span></div><div class="tt-note">encoder.layer[16] CLS-projection onto the "${claim.concept}" axis for this token's receptive field.</div>`
-        );
-        renderReadoutLive(claim, d);
-      })
-      .on("mousemove", moveTip)
-      .on("mouseout", function () {
-        if (!d3.select(this).classed("is-selected")) d3.select(this).attr("stroke", "rgba(255,255,255,0.04)");
-        hideTip();
-        renderReadoutLive(claim, selectedPatch);
-      })
-      .on("click", function (event, d) {
-        patchLayer.selectAll("rect").classed("is-selected", false).attr("stroke", "rgba(255,255,255,0.04)").attr("stroke-width", 1);
-        d3.select(this).classed("is-selected", true).attr("stroke", "#fff").attr("stroke-width", 2);
-        selectedPatch = d;
-        renderReadoutLive(claim, d);
-      });
 
-    svg
-      .append("text")
-      .attr("x", W - 12)
-      .attr("y", 20)
-      .attr("text-anchor", "end")
-      .attr("fill", "#7d82a0")
-      .style("font-size", "11px")
-      .style("font-family", "var(--mono)")
-      .text(`axis: ${claim.contrast}`);
+    // ring the single most concept-carrying patch — left fully un-veiled (real color)
+    g.append("rect")
+      .attr("x", topC * CELL).attr("y", topR * CELL)
+      .attr("width", CELL).attr("height", CELL)
+      .attr("fill", "none").attr("stroke", "#ffe08a").attr("stroke-width", 1.4);
 
-    document.getElementById("case-caption").textContent =
-      `${claim.claim} — 20×15 patch tokens colored by projection onto the ${claim.contrast} axis at encoder.layer[16].`;
+    // measured badge (replaces the old "schematic · not measured" watermark)
+    svg.append("rect").attr("x", 6).attr("y", 6).attr("width", 74).attr("height", 16)
+      .attr("rx", 3).attr("fill", "rgba(12,10,24,0.72)");
+    svg.append("text").attr("x", 43).attr("y", 17).attr("text-anchor", "middle")
+      .attr("fill", "#9be7a8").style("font-size", "9px").style("font-family", "var(--mono)")
+      .text("● measured");
 
-    renderReadoutStatic(claim);
-    selectedPatch = null;
-    renderReadoutLive(claim, null);
+    // header row above the tile: axis · layer · top-z · overlay toggle
+    const head = document.createElement("div");
+    head.className = "hm-head";
+    const strong = hm.top_z >= 3;
+    head.innerHTML =
+      `<div class="hm-head-left">` +
+        `<span class="hm-axis">${hm.pos} vs ${hm.neg}</span>` +
+        `<span class="hm-layer">readout layer · ${hm.n_patches || S * S} patches</span>` +
+      `</div>` +
+      `<div class="hm-head-right">` +
+        `<span class="hm-z ${strong ? "hot" : "flat"}">top-patch z ${(+hm.top_z).toFixed(1)} vs null</span>` +
+        `<button class="hm-toggle" id="hm-toggle">${overlayOn ? "hide" : "show"} overlay</button>` +
+      `</div>`;
+    container.prepend(head);
+    const btn = head.querySelector("#hm-toggle");
+    btn.addEventListener("click", () => { overlayOn = !overlayOn; renderHistology(); });
+
+    // z legend under the tile
+    const leg = document.createElement("div");
+    leg.className = "hm-legend";
+    leg.innerHTML =
+      `<span class="hm-leg-lab">shaded = low · clear = high</span>` +
+      `<span class="hm-leg-bar"></span>` +
+      `<span class="hm-leg-lab">z ${hm.z_min} → ${hm.z_max}</span>`;
+    container.appendChild(leg);
+
+    document.getElementById("case-caption").innerHTML =
+      `<b>${claim.claim}</b> — real NCT-CRC ${hm.pos} tile. Each cell is one 16px patch: it keeps the ` +
+      `tile's real color where its readout-layer activation aligns with the <b>${hm.pos} vs ${hm.neg}</b> ` +
+      `concept axis, and is veiled darker the less it does (z-scored against ${hm.n_null} matched-random directions). ` +
+      (strong
+        ? `The concept <b>singles out specific patches above the null</b> (top-z ${(+hm.top_z).toFixed(1)}) — ` +
+          `a measured saliency map, not a schematic.`
+        : `No patch clears the null here — reported honestly.`) +
+      ` <span class="hm-caveat">Projection saliency on the model's representation; the faithful ` +
+      `mask-and-recompute variant is the live source-intervention behind the necessity curve.</span>`;
+  }
+
+  // Honest fallback for a claim whose concept has no per-patch substrate (declined claims,
+  // or any concept without a precomputed heatmap). No fabricated tissue.
+  function renderNoMap(container, claim) {
+    const why = claim && claim.reason
+      ? claim.reason
+      : "no per-patch causal map for this concept on the wired substrate";
+    container.innerHTML =
+      `<div class="hm-nomap">` +
+        `<div class="hm-nomap-mark">⊘</div>` +
+        `<div class="hm-nomap-title">No per-patch causal map</div>` +
+        `<div class="hm-nomap-sub">${claim ? claim.claim : "—"} — ${why}. ` +
+        `The certified evidence (axis, pillars, contrast gate, trace) is on the right.</div>` +
+      `</div>`;
+    const cap = document.getElementById("case-caption");
+    if (cap) cap.textContent = "";
   }
 
   // ---------------------------------------------------------------- proof: quadrant map
@@ -384,9 +333,27 @@
 
     const svg = d3.select(container).append("svg").attr("width", width).attr("height", height);
 
+    if (!certifiable.length) {
+      svg.append("text").attr("x", width / 2).attr("y", height / 2).attr("text-anchor", "middle")
+        .attr("fill", "var(--text-faint)").style("font-size", "12px").text("no certifiable claims to plot");
+      return;
+    }
+
+    // Domains are DATA-DRIVEN so live scores (which can fall well below the mock's tight
+    // 0.9–1.0 band) never render off-chart or collapse the sufficiency radius to nothing.
+    const specVals = certifiable.map((d) => d.scores.specificity);
+    const sufVals = certifiable.map((d) => d.scores.sufficiency);
+    let [sLo, sHi] = d3.extent(specVals);
+    if (sLo === sHi) { sLo -= 0.02; sHi += 0.02; }          // flat band -> give it height
+    const sPad = (sHi - sLo) * 0.2 || 0.02;
+
     const x = d3.scaleLinear().domain([0, 1.05]).range([margin.left, width - margin.right]);
-    const y = d3.scaleLinear().domain([0.9, 1.0]).range([height - margin.bottom, margin.top]);
-    const r = d3.scaleSqrt().domain([0.9, 1]).range([8, 18]);
+    const y = d3.scaleLinear().domain([Math.max(0, sLo - sPad), Math.min(1, sHi + sPad)]).nice()
+      .range([height - margin.bottom, margin.top]);
+    // clamp() so a low-sufficiency claim can't produce a sub-floor / negative (invisible) radius.
+    let [rLo, rHi] = d3.extent(sufVals);
+    if (rLo === rHi) rLo = Math.max(0, rLo - 0.1);
+    const r = d3.scaleSqrt().domain([rLo, rHi]).range([7, 17]).clamp(true);
 
     svg
       .append("g")
@@ -451,18 +418,42 @@
         hideTip();
       });
 
+    // Labels: with many claims clustered in a tight specificity band the names collide, so
+    // greedily stagger any that land too close and paint a halo so overlaps stay readable.
+    const placed = [];
+    certifiable.forEach((d, i) => {
+      const px = x(d.scores.necessity);
+      let py = y(d.scores.specificity) - r(d.scores.sufficiency) - 6;
+      let below = false;
+      // if a prior label sits within ~52px horizontally and ~11px vertically, flip below / nudge
+      for (const p of placed) {
+        if (Math.abs(p.px - px) < 52 && Math.abs(p.py - py) < 11) {
+          py = y(d.scores.specificity) + r(d.scores.sufficiency) + 13;
+          below = true;
+          if (placed.some((q) => Math.abs(q.px - px) < 52 && Math.abs(q.py - py) < 11)) py += 11;
+          break;
+        }
+      }
+      py = Math.max(12, Math.min(height - margin.bottom - 2, py));
+      placed.push({ px, py, text: (d.concept || "").replace(/_/g, " "), i, below });
+    });
     svg
       .append("g")
       .selectAll("text.dot-label")
-      .data(certifiable)
+      .data(placed)
       .join("text")
-      .attr("class", "dot-label")
-      .attr("x", (d) => x(d.scores.necessity))
-      .attr("y", (d) => y(d.scores.specificity) - r(d.scores.sufficiency) - 6)
+      .attr("class", (p) => "dot-label" + (p.i === selectedIdx ? " is-selected" : ""))
+      .attr("x", (p) => p.px)
+      .attr("y", (p) => p.py)
       .attr("text-anchor", "middle")
       .style("font-size", "9.5px")
-      .attr("fill", "var(--text-faint)")
-      .text((d) => d.concept.replace(/_/g, " "));
+      .style("pointer-events", "none")
+      .attr("paint-order", "stroke")
+      .attr("stroke", "var(--panel)")
+      .attr("stroke-width", 3)
+      .attr("stroke-linejoin", "round")
+      .attr("fill", (p) => (p.i === selectedIdx ? "var(--text)" : "var(--text-faint)"))
+      .text((p) => p.text);
   }
 
   function renderQuadrantSelection() {
@@ -482,6 +473,13 @@
     const margin = { top: 20, right: 20, bottom: 36, left: 44 };
     const svg = d3.select(container).append("svg").attr("width", width).attr("height", height);
 
+    // Concept-level certify has no per-slide live intervention -> no curve to draw.
+    if (!claim.live_necessity || !claim.live_necessity.curve || !claim.live_necessity.curve.length) {
+      svg.append("text").attr("x", width / 2).attr("y", height / 2).attr("text-anchor", "middle")
+        .attr("fill", "var(--text-faint)").attr("font-family", "var(--mono)").attr("font-size", 12)
+        .text("no live per-slide intervention — concept-level scope");
+      return;
+    }
     const curve = claim.live_necessity.curve;
     const layers = curve.map((c) => c.layer);
     const x = d3.scalePoint().domain(layers).range([margin.left, width - margin.right]).padding(0.5);
@@ -591,7 +589,10 @@
 
     const W = Math.max(460, container.clientWidth || 640);
     const H = 344;
-    const nodeW = 14, pad = 18;
+    const nodeW = 14;
+    // tighten inter-node padding when the concept column is crowded so thin ribbons + their
+    // labels don't collide (mock has 5-6 nodes; a live answer can have 10+).
+    const pad = Math.max(1, groups.length, verdicts.length) > 7 ? 11 : 18;
     const margin = { left: 4, right: 152, top: 10, bottom: 10 };
     const availH = H - margin.top - margin.bottom;
     const maxNodes = Math.max(1, groups.length, verdicts.length);
@@ -684,8 +685,10 @@
       .on("mouseout", hideTip);
 
     // labels — concept column (smaller), verdict column (larger/bolder), source (right of node w/ bg)
-    function nodeLabel(sel, nodes, size, weight, fill) {
-      sel
+    function nodeLabel(sel, nodes, size, weight, fill, maxPx) {
+      const budget = maxPx && parseFloat(size) ? Math.floor(maxPx / (parseFloat(size) * 0.56)) : 0;
+      const trunc = (s) => (budget && s.length > budget ? s.slice(0, Math.max(1, budget - 1)) + "…" : s);
+      const t = sel
         .selectAll("text")
         .data(nodes.filter((n) => n.h > 0.5))
         .join("text")
@@ -696,9 +699,12 @@
         .style("font-size", size)
         .style("font-weight", weight)
         .attr("fill", fill)
-        .text((n) => n.label);
+        .text((n) => trunc(n.label));
+      // keep the full name reachable on hover when truncated
+      t.append("title").text((n) => n.label);
     }
-    nodeLabel(svg.append("g"), conceptNodes, "11.5px", 500, "var(--text-dim)");
+    // concept labels live between their column and the verdict column — clip to that gap.
+    nodeLabel(svg.append("g"), conceptNodes, "11.5px", 500, "var(--text-dim)", x2 - (x1 + nodeW + 8) - 6);
     nodeLabel(svg.append("g"), verdictNodes, "12.5px", 700, "var(--text)");
 
     // source label: sits over the link fan, so give it a small backing rect for legibility
@@ -807,9 +813,18 @@
     });
   }
 
+  const NUMWORD = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+    "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen"];
   function renderAnswerFlow() {
     const badge = document.getElementById("aflow-badge");
     if (badge) badge.textContent = window.CARD.coverage.summary;
+    // Headline must match the real claim count — never the hardcoded mock's "twelve".
+    const title = document.getElementById("aflow-title");
+    if (title) {
+      const n = window.CARD.claims.length;
+      const word = NUMWORD[n] || String(n);
+      title.textContent = `One answer, ${word} claim${n === 1 ? "" : "s"}, one honest split`;
+    }
     renderSankey();
     renderClaimRail();
   }
@@ -841,21 +856,28 @@
     const badge = document.getElementById("verdict-badge-big");
     badge.className = "verdict-badge-big " + claim.verdict;
     badge.textContent = claim.verdict;
-    const trace = claim.reasoning_trace[claim.reasoning_trace.length - 1];
-    document.getElementById("verdict-sentence").textContent = trace.interpretation;
+    // Prefer the explicit verdict step; fall back to the last step, then to the claim's
+    // notes/reason. Live claims can ship an empty or truncated trace — never assume one.
+    const tr = claim.reasoning_trace || [];
+    const vstep = tr.find((t) => t.step === "verdict") || tr[tr.length - 1];
+    document.getElementById("verdict-sentence").textContent =
+      (vstep && vstep.interpretation) || (claim.notes && claim.notes[0]) || claim.reason || "—";
   }
 
   function renderCoverage() {
     const cov = window.CARD.coverage;
     const grounded = certifiable.filter((c) => c.verdict === "GROUNDED").length;
     const weak = certifiable.filter((c) => c.verdict === "WEAK").length;
-    const total = cov.claims_total;
+    const notCert = (cov && cov.not_certifiable != null) ? cov.not_certifiable : declinedCount;
+    // total from the parts we're drawing so the three segments always sum to exactly 100%
+    // (a stale coverage.claims_total would otherwise under/overflow the rounded bar).
+    const total = Math.max(1, grounded + weak + notCert);
     const bar = d3.select("#coverage-bar");
     bar.selectAll("*").remove();
     [
       [grounded, COLOR.GROUNDED],
       [weak, COLOR.WEAK],
-      [cov.not_certifiable, COLOR.NOT_CERTIFIABLE],
+      [notCert, COLOR.NOT_CERTIFIABLE],
     ].forEach(([n, c]) => {
       bar.append("div").attr("class", "coverage-seg").style("width", (n / total) * 100 + "%").style("background", c);
     });
@@ -921,6 +943,7 @@
     case: { title: "Case", tag: "one claim, followed pixel to concept axis" },
     proof: { title: "Proof", tag: "necessity × sufficiency × specificity, and where the axis came from" },
     verdict: { title: "Verdict", tag: "certified claim, confound check, honest coverage" },
+    research: { title: "AutoResearch", tag: "autonomous causal-circuit discovery — probe · certify · locate · ablate · reflect" },
   };
 
   function goToView(id) {
@@ -943,8 +966,51 @@
     });
   }
 
+  // ----------------------------------------- prompt console: score + reasoning trace
+  // Shows, in the Prompt window, the certified claim's verdict/scores at the top and the
+  // deterministic reasoning trace as boxes-with-arrows in causal order. Uses the same
+  // per-claim `reasoning_trace` the certify_answer card returns (step OR pillar key).
+  function renderPromptTrace() {
+    const el = document.getElementById("c-trace");
+    if (!el) return;
+    const claim = (typeof currentClaim === "function") ? currentClaim() : null;
+    const steps = claim && (claim.reasoning_trace || []);
+    if (!claim || !steps || !steps.length) { el.hidden = true; el.innerHTML = ""; return; }
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+    const col = COLOR[claim.verdict] || COLOR.accent;
+    const sc = claim.scores || {};
+    const num = (v) => (typeof v === "number" ? v.toFixed(2) : "—");
+    // Composite "certify score": geomean of the three pillars — the same aggregate the
+    // population certify uses (geomean(necessity, sufficiency, specificity)).
+    const g = ["necessity", "sufficiency", "specificity"].map((k) => Math.max(0, sc[k] || 0));
+    const total = Math.pow(g[0] * g[1] * g[2], 1 / 3);
+    const boxes = steps
+      .map((s, i) => {
+        const name = esc((s.step || s.pillar || "").toString().toUpperCase());
+        const arrow = i < steps.length - 1 ? `<span class="ct-arrow" aria-hidden="true">→</span>` : "";
+        const why = s.interpretation ? `<span class="ct-why">${esc(s.interpretation)}</span>` : "";
+        return `<div class="ct-box"><span class="ct-n">${esc(s.n)}</span><span class="ct-name">${name}</span><span class="ct-obs">${esc(s.observation)}</span>${why}</div>${arrow}`;
+      })
+      .join("");
+    el.innerHTML =
+      `<div class="ct-scoreband">` +
+        `<div class="ct-total"><span class="ct-total-lab">certify score</span>` +
+          `<span class="ct-total-val" style="color:${col}">${total.toFixed(2)}</span>` +
+          `<span class="ct-total-sub">geomean · nec × suf × spec</span></div>` +
+        `<div class="ct-meta"><span class="ct-concept">${esc(claim.concept)}</span>` +
+          `<span class="ct-chip" style="color:${col};border-color:${col}">${esc(claim.verdict)}</span>` +
+          `<span class="ct-sc">nec ${num(sc.necessity)}</span>` +
+          `<span class="ct-sc">suf ${num(sc.sufficiency)}</span>` +
+          `<span class="ct-sc">spec ${num(sc.specificity)}</span></div>` +
+      `</div>` +
+      `<div class="ct-lab2">reasoning trace · causal order</div>` +
+      `<div class="ct-flow">${boxes}</div>`;
+    el.hidden = false;
+  }
+
   // ------------------------------------------------------------- render-all
   function renderAll() {
+    renderPromptTrace();
     renderClaimStrip();
     renderHistology();
     renderAnswerFlow();
@@ -983,6 +1049,17 @@
       setLiveBadge(false); // static mock retained
       return false;
     }
+  }
+
+  // Measured per-patch causal heatmaps (dashboard/precompute_heatmaps.py). Static JSON so
+  // the demo needs no GPU at runtime; absence just falls back to the honest "no map" panel.
+  async function loadHeatmaps() {
+    try {
+      const r = await fetch(apiUrl("heatmaps/heatmaps.json"), { headers: { Accept: "application/json" } });
+      if (!r.ok) return;
+      window.HEATMAPS = await r.json();
+      if (!document.body.classList.contains("no-card")) renderHistology();
+    } catch (e) { /* no heatmaps -> renderNoMap fallback */ }
   }
 
   // ---------------------------------------------------------------- run button
@@ -1108,10 +1185,12 @@
 
     initNavigation();
     initConsole();
+    loadHeatmaps();
 
     document.getElementById("claim-prev").addEventListener("click", () => selectClaim(selectedIdx - 1));
     document.getElementById("claim-next").addEventListener("click", () => selectClaim(selectedIdx + 1));
-    document.getElementById("btn-run").addEventListener("click", runCertify);
+    const _runBtn = document.getElementById("btn-run");
+    if (_runBtn) _runBtn.addEventListener("click", runCertify);
 
     goToView("prompt");   // land on the Prompt section
 

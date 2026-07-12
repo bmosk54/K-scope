@@ -177,6 +177,14 @@ def certify_answer(prompt, answer, track="phikon", split="train", n_null=200,
         "assumptions": ASSUMPTIONS,
         "caveat": CAVEAT,
     }
+    # Top-level `reasoning_trace` (same key + step schema as the population `certify` card)
+    # so a UI reading top-level always finds one — the per-claim causal steps, flattened,
+    # each tagged with its concept. Per-claim traces remain under claims[i].reasoning_trace.
+    flat = []
+    for cl in card["claims"]:
+        for s in cl["reasoning_trace"]:
+            flat.append({**s, "concept": cl["concept"]})
+    card["reasoning_trace"] = flat
     # Optional plain-English narration — ONE batched LLM call, off by default so the
     # fast path stays instant. The numbers/verdicts are the deterministic trace's.
     if explain:
