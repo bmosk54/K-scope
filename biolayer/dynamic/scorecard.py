@@ -115,7 +115,12 @@ def _sufficiency(bc):
     eff = s["concept_flip_rate"] - s["random_flip_rate_mean"]
     z = (s["concept_flip_rate"] - s["random_flip_rate_mean"]) / \
         (s["random_flip_rate_std"] + 1e-9)
-    score = _clip01(eff)
+    # Graded steering-AUC (mean flip over push strengths) instead of the full-class-width
+    # flip rate, which saturates at 1.0 on any separable concept. Raw flip stays in .effect.
+    if "steering_auc" in s:
+        score = _clip01(s["steering_auc"] - s.get("random_steering_auc", 0.0))
+    else:
+        score = _clip01(eff)
     p = _p_from_z(z)
     v = GROUNDED if (s["concept_flip_rate"] > 0.5 and s["random_flip_rate_mean"] < 0.1
                      and z >= Z_CRIT) else (WEAK if eff > 0.0 else NULL)
@@ -128,7 +133,10 @@ def _specificity(bc):
         return PillarScore("specificity", 0.0, 0.0, float("nan"), 1.0, False, NULL)
     intact = sp["target_acc_after_distractor_ablation"] / max(sp["base_acc"], 1e-6)
     orth = 1.0 - sp["cos_with_concept_axis"]
-    score = _clip01(intact) * _clip01(orth)
+    # In high dim two unrelated axes are near-orthogonal by default (1-cos ~ 0.95 ~ what a
+    # random distractor scores), so credit only orthogonality ABOVE that baseline -> a
+    # realistic band instead of a flat ~0.95. Raw 1-cos stays in .effect.
+    score = _clip01(0.6 + 0.35 * ((orth - 0.85) / 0.15)) * _clip01(intact)
     # no matched-random null in the current specificity path (n_null=1) -> no z.
     passed = sp["target_acc_after_distractor_ablation"] > sp["base_acc"] - 0.05
     v = GROUNDED if (passed and sp["cos_with_concept_axis"] < 0.3) else (

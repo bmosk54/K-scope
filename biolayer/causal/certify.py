@@ -99,6 +99,27 @@ def _necessity_confidence(n, chance, live=None, layered=None):
     return _clip01(min(eff, READOUT_ONLY_NECESSITY_CAP)), "readout-only (redundancy-limited, capped)"
 
 
+# In dim ~1024, two unrelated axes are near-orthogonal by default (cos ~ 0.05 -> 1-cos ~
+# 0.95), so a raw geometric "1-cos" specificity is close to what a RANDOM distractor scores.
+# Credit only orthogonality above that baseline -> a realistic band instead of a flat ~0.95.
+SPEC_ORTH_BASELINE = 0.85
+
+
+def _calibrate_sufficiency(s):
+    """Graded sufficiency: steering-AUC (mean flip over push strengths) minus its matched-
+    random-null AUC. Falls back to the raw full-width flip-rate effect if AUC is absent."""
+    if "steering_auc" in s:
+        return _clip01(s["steering_auc"] - s.get("random_steering_auc", 0.0))
+    return _clip01(s["concept_flip_rate"] - s["random_flip_rate_mean"])
+
+
+def _calibrate_specificity(orth, intact):
+    """Orthogonality credited only above the random-distractor baseline, gated by how intact
+    the target probe stays. Maps the near-chance geometric 1-cos into a realistic band."""
+    above = (orth - SPEC_ORTH_BASELINE) / (1.0 - SPEC_ORTH_BASELINE)   # 0 at baseline, 1 at perfect
+    return _clip01(0.6 + 0.35 * above) * _clip01(intact)
+
+
 def build_pillars(bc, chance=0.5, live=None, layered=None):
     """Normalize the raw battery card into the three composable pillars."""
     n, s = bc["necessity_readout"], bc["sufficiency_steering"]
@@ -113,13 +134,17 @@ def build_pillars(bc, chance=0.5, live=None, layered=None):
         passed=n["concept_ablated_acc"] <= chance + 0.05,
         verdict=n["verdict"], raw={**n, "necessity_basis": nec_basis})
 
-    suff_eff = s["concept_flip_rate"] - s["random_flip_rate_mean"]
+    # Sufficiency: the full-class-width flip rate saturates at 1.0 on any separable concept.
+    # Use the graded steering-AUC (mean flip over push strengths 0..1 class-widths) vs its
+    # matched-random-null AUC — a calibrated "steering efficiency" that sits in a realistic
+    # band. Raw flip stays in .raw.
+    suff_conf = _calibrate_sufficiency(s)
     sufficiency = _pillar(
         "sufficiency",
         statistic=s["concept_flip_rate"], null=s["random_flip_rate_mean"],
-        effect=suff_eff, confidence=suff_eff,
+        effect=s["concept_flip_rate"] - s["random_flip_rate_mean"], confidence=suff_conf,
         passed=s["concept_flip_rate"] > 0.5 and s["random_flip_rate_mean"] < 0.1,
-        verdict=s["verdict"], raw=s)
+        verdict=s["verdict"], raw={**s, "sufficiency_basis": "graded steering-AUC (raw flip in .concept_flip_rate)"})
 
     if "target_acc_after_distractor_ablation" in sp:
         intact = sp["target_acc_after_distractor_ablation"] / max(sp["base_acc"], 1e-6)
@@ -127,9 +152,9 @@ def build_pillars(bc, chance=0.5, live=None, layered=None):
         specificity = _pillar(
             "specificity",
             statistic=sp["target_acc_after_distractor_ablation"], null=sp["base_acc"],
-            effect=orth, confidence=_clip01(intact) * _clip01(orth),
+            effect=orth, confidence=_calibrate_specificity(orth, intact),
             passed=sp["target_acc_after_distractor_ablation"] > sp["base_acc"] - 0.05,
-            verdict=sp["verdict"], raw=sp)
+            verdict=sp["verdict"], raw={**sp, "specificity_basis": "orthogonality above random baseline (raw 1-cos in .effect)"})
     else:
         specificity = None
     return {"necessity": necessity, "sufficiency": sufficiency, "specificity": specificity}

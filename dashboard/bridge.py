@@ -130,23 +130,44 @@ def build_designed(question=DEMO_PROMPT, model="phikon_v2", use_bedrock=True):
         probes = [{"concept": c.concept, "pos": c.pos, "neg": c.neg,
                    "distractor": list(c.distractor)} for c in _cn._TISSUE_CONCEPTS][:8]
         designed_by = "registry (bedrock unavailable)"
+    def _validate(fx, ly, cn, pos, neg, concept, substrate):
+        X, y = _probe.select_pair(fx, ly, cn, pos, neg)
+        au = _contrast._heldout_auroc(X, y)
+        coll = _contrast._intensity_collinearity(X, y)
+        gate = "PASS" if (au >= _contrast.MIN_HELDOUT_AUROC and
+                          coll <= _contrast.MAX_INTENSITY_COLLINEARITY) else "REJECT"
+        return {"concept": concept, "contrast": f"{pos} vs {neg}", "substrate": substrate,
+                "auroc": round(float(au), 3), "intensity_r": round(float(coll), 3),
+                "gate": gate, "sufficiency": 1.0, "random_null": 0.0}
+
     out = []
     for p in probes:
         try:
-            X, y = _probe.select_pair(feats, labels, class_names, p["pos"], p["neg"])
-            au = _contrast._heldout_auroc(X, y)
-            coll = _contrast._intensity_collinearity(X, y)
-            gate = "PASS" if (au >= _contrast.MIN_HELDOUT_AUROC and
-                              coll <= _contrast.MAX_INTENSITY_COLLINEARITY) else "REJECT"
-            out.append({"concept": p.get("concept"), "contrast": f'{p["pos"]} vs {p["neg"]}',
-                        "auroc": round(float(au), 3), "intensity_r": round(float(coll), 3),
-                        "gate": gate, "sufficiency": 1.0, "random_null": 0.0})
+            out.append(_validate(feats, labels, class_names, p["pos"], p["neg"],
+                                 p.get("concept"), "tissue · NCT-CRC"))
         except Exception:
             continue
+    # Cell probes: the SAME design/validation gate on the HistoPLUS cell substrate, so the
+    # panel shows both tile-level (tissue) and nucleus-level (cell) candidate probes.
+    try:
+        from biolayer.dynamic import concepts as _cn
+        from biolayer import config as _cfg
+        cfeats, clabels, cnames, _ = loader.load(model, "train", dataset_slug=_cfg.HISTOPLUS_SLUG)
+        cpresent = set(cnames)
+        for c in _cn._CELL_CONCEPTS:
+            if c.pos in cpresent and c.neg in cpresent:
+                try:
+                    out.append(_validate(cfeats, clabels, cnames, c.pos, c.neg,
+                                         c.concept, "cell · HistoPLUS"))
+                except Exception:
+                    continue
+    except Exception:
+        pass  # cell substrate unavailable -> tissue-only panel (degrades cleanly)
     return {"question": question, "designed_by": designed_by, "n_probes": len(out),
             "probes": out, "cap_threshold": _contrast.MAX_INTENSITY_COLLINEARITY,
             "note": "LLM proposes contrasts; the deterministic intensity gate decides "
-                    "certifiability (Gate 2b adjudicates suspects)."}
+                    "certifiability (Gate 2b adjudicates suspects). Tissue probes on "
+                    "NCT-CRC (phikon-v2), cell probes on HistoPLUS (phikon-v2)."}
 
 
 def build_tracks():
