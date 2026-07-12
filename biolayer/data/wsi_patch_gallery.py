@@ -480,10 +480,11 @@ _TEMPLATE = r"""<!DOCTYPE html>
   const SOURCES = __SOURCES__;                      // [{label, href, current}] or null
   const srcSwitch = document.getElementById('src-switch'),
         srcMenu = document.getElementById('src-menu'), srcCaret = document.getElementById('src-caret');
-  if (SOURCES && SOURCES.length > 1) {
+  function buildSourceMenu(items) {
+    if (items.length <= 1) return;                  // only the current slide exists -> no switcher
     srcCaret.hidden = false;
     srcSwitch.classList.add('switchable');
-    SOURCES.forEach(s => {
+    items.forEach(s => {
       const it = document.createElement('button');
       it.type = 'button'; it.className = 'src-item' + (s.current ? ' current' : '');
       it.textContent = s.label; it.disabled = !!s.current;
@@ -492,6 +493,13 @@ _TEMPLATE = r"""<!DOCTYPE html>
     });
     srcSwitch.addEventListener('click', () => { srcMenu.hidden = !srcMenu.hidden; });
     document.addEventListener('click', (e) => { if (!srcSwitch.contains(e.target)) srcMenu.hidden = true; });
+  }
+  if (SOURCES && SOURCES.length > 1) {
+    // only list sources whose gallery file actually exists (no 404s); current is always kept
+    Promise.all(SOURCES.map(s => s.current
+        ? Promise.resolve(true)
+        : fetch(s.href, { method: 'HEAD' }).then(r => r.ok).catch(() => false)))
+      .then(oks => buildSourceMenu(SOURCES.filter((s, i) => oks[i])));
   }
 
   // top / bottom-of-axis toggle (only if a bottom set was supplied)
