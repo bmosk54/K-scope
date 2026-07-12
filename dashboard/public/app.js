@@ -234,6 +234,7 @@
   function renderCausalMap(container, claim, hm) {
     const S = hm.grid_side || (hm.z_grid || []).length || 14;
     const CELL = 224 / S;
+    const posL = hm.pos_label || hm.pos, negL = hm.neg_label || hm.neg;   // pole labels
     const svg = d3
       .select(container)
       .append("svg")
@@ -274,6 +275,39 @@
       .attr("width", CELL).attr("height", CELL)
       .attr("fill", "none").attr("stroke", "#ffe08a").attr("stroke-width", 1.4);
 
+    // ---- hover: rank each patch WITHIN the pole it leans toward, e.g. "1st TUM" ----
+    // (rank 1 of the pos pole == the ringed top patch). Ranked by |signed z| so it's "how
+    // strongly this patch carries that direction", not just importance.
+    const cells = [];
+    for (let r = 0; r < S; r++) {
+      for (let c = 0; c < S; c++) {
+        const zz = (zg[r] && zg[r][c]) || 0;
+        cells.push({ r, c, z: zz, mag: Math.abs(zz),
+                     pole: zz >= 0 ? "pos" : "neg",
+                     cls: zz >= 0 ? hm.pos : hm.neg,
+                     label: zz >= 0 ? posL : negL });
+      }
+    }
+    ["pos", "neg"].forEach((pole) => {
+      cells.filter((x) => x.pole === pole).sort((a, b) => b.mag - a.mag)
+           .forEach((x, i) => { x.rank = i + 1; });
+    });
+    const nPos = cells.filter((x) => x.pole === "pos").length;
+    const ordinal = (n) => { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
+    cells.forEach((x) => {
+      const total = x.pole === "pos" ? nPos : cells.length - nPos;
+      g.append("rect")
+        .attr("x", x.c * CELL).attr("y", x.r * CELL)
+        .attr("width", CELL).attr("height", CELL)
+        .attr("fill", "transparent").style("cursor", "crosshair")
+        .on("mouseover", (e) => showTip(e,
+          `<b>${ordinal(x.rank)} ${x.cls}</b>` +
+          `<div style="opacity:.8;margin-top:2px">leans toward <b>${x.label}</b> · z ${x.z.toFixed(2)}` +
+          `<br>rank ${x.rank} of ${total} patches toward ${x.cls}</div>`))
+        .on("mousemove", moveTip)
+        .on("mouseout", hideTip);
+    });
+
     // measured badge (replaces the old "schematic · not measured" watermark)
     svg.append("rect").attr("x", 6).attr("y", 6).attr("width", 74).attr("height", 16)
       .attr("rx", 3).attr("fill", "rgba(12,10,24,0.72)");
@@ -299,7 +333,6 @@
     btn.addEventListener("click", () => { overlayOn = !overlayOn; renderHistology(); });
 
     // diverging legend: which pole each patch leans toward (the two ends of THIS axis)
-    const posL = hm.pos_label || hm.pos, negL = hm.neg_label || hm.neg;
     const leg = document.createElement("div");
     leg.className = "hm-legend";
     leg.innerHTML =
@@ -1162,10 +1195,22 @@
     $c("c-hypothesis").addEventListener("click", async () => {
       const b = $c("c-hypothesis"); b.disabled = true; setStatus("optimizing the prompt…");
       try {
-        const cov = window.CARD && window.CARD.coverage ? window.CARD.coverage.summary : "";
+        const card = window.CARD || {};
+        const cov = card.coverage ? card.coverage.summary : "";
+        // Feed the certify TRACE — per-claim verdicts, why each was declined, and the
+        // honest-split summary — so the LLM rewrites the question from the actual
+        // grounding outcome, not just the one-line coverage headline.
+        const claims = (card.claims || []).map((c) => ({
+          claim: c.claim, verdict: c.verdict,
+          concept: c.concept || null, contrast: c.contrast || null,
+          reason: c.verdict === "NOT_CERTIFIABLE" ? (c.reason || "") : null,
+        }));
+        const summary_trace = (card.summary_trace || []).map((s) =>
+          ({ step: s.step, observation: s.observation }));
         const r = await fetch(apiUrl("api/optimize_prompt"), {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: $c("c-prompt").value, coverage: cov }) });
+          body: JSON.stringify({ prompt: $c("c-prompt").value, coverage: cov,
+                                 claims, summary_trace }) });
         const d = await r.json();
         if (d.error) throw new Error(d.error);
         $c("c-prompt").value = d.prompt;

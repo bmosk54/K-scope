@@ -182,8 +182,12 @@ def score_claim(concept, bc, layered, confound_result, intervened_on_input=False
     # distributed necessity). Readout-only necessity is near-tautological (projecting out a
     # ~1-D probe's own axis always collapses it), so it can NOT promote GROUNDED. This is
     # what stops a WEAK necessity + near-circular sufficiency from certifying GROUNDED.
-    genuine_necessity = intervened_on_input or (bites_layer != "readout"
-                                                and nec.verdict == GROUNDED)
+    # Genuine necessity = the LIVE source-intervention ONLY. The cached layered curve is
+    # near-tautological at EVERY layer (projecting a probe's own axis out of the space it
+    # was fit in always collapses it; it cannot model downstream recompute), so a
+    # non-readout cached "bite" is NOT genuine evidence. Only a live forward-pass recompute
+    # whose necessity verdict actually GROUNDED can promote the claim.
+    genuine_necessity = intervened_on_input and nec.verdict == GROUNDED
     necessity_capped = False
     if suf.verdict == NULL and nec.verdict == NULL:
         verdict = NULL
