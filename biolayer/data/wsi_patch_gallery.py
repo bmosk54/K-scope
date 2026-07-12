@@ -212,12 +212,13 @@ _TEMPLATE = r"""<!DOCTYPE html>
   /* dashed unit boxes drawn on the stage view: subtle scale markers for the ranked unit.
      Centered on the crop (the crop is centered on the ranked patch/tile); sized in JS. */
   .stage-imgwrap { position: relative; display: block; width: 100%; }
-  /* dashed marker for the ranked unit, sized in JS. High-contrast so it reads on any H&E:
-     a bright accent dash sandwiched between a dark and a light 1px outline. */
+  /* dashed marker for the ranked unit, sized in JS. Cyan is the complement of H&E's
+     pink/purple so it stands out on tissue (and is distinct from the pink UI accent);
+     a dark + light 1px outline keeps the dash readable on any background. */
   .unit-box { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
     pointer-events: none; box-sizing: border-box; border-radius: 2px; min-width: 6px; min-height: 6px;
-    border: 2px dashed var(--accent);
-    box-shadow: 0 0 0 1px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.6); }
+    border: 2px dashed #00e5ff;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.6), inset 0 0 0 1px rgba(0,0,0,.35); }
 
   /* three regions: thumb rail · stage · aside */
   .layout { display: grid; gap: 20px; margin-top: 16px;
@@ -472,12 +473,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
     stageImg.src = p.img;
     stageImg.alt = `${p.title} — level-0 tile at (${p.ox}, ${p.oy})`;
     document.getElementById('st-title').textContent = p.title;
-    document.getElementById('st-note').textContent = `${p.w} × ${p.h} px crop · level 0`;
+    document.getElementById('st-note').textContent = `${p.w} × ${p.h} px crop`;
     document.getElementById('md-title').textContent = p.title;
     document.getElementById('md-desc').textContent = p.desc;
     document.getElementById('md-center').textContent = `${p.cx}, ${p.cy}`;
     document.getElementById('md-origin').textContent = `${p.ox}, ${p.oy}`;
-    document.getElementById('md-size').textContent = `${p.w} × ${p.h} px · level 0`;  // the view crop
+    document.getElementById('md-size').textContent = `${p.w} × ${p.h} px`;  // the view crop
     // the ranked unit: a 14×14 patch token (224px-tile footprint / 16) or the whole 224×224 tile.
     if (MPP > 0) {
       const tilePx = Math.round(224 * Math.max(0.5 / MPP, 1)), tokPx = Math.round(tilePx / 16);
