@@ -52,32 +52,34 @@ def _jpeg_uri(arr, quality: int, maxside=None):
 def build_gallery(slide: str, patches, out_html: str, scratch: str,
                   size: int = 1024, quality: int = 86, display_max: int = 1024,
                   overview_max: int = 1400) -> dict:
-    """Cut every patch from a single level-0 read and write the self-contained HTML."""
-    import tifffile
+    """Read each patch via random-access region reads and write the self-contained HTML.
+
+    Every tile is fetched with the OpenSlide-backed reader, which decodes only the
+    tiles overlapping the region — so N patches cost N small reads, and a slide whose
+    level 0 exceeds RAM (e.g. a 125k×79k TCGA-BRCA slide) works the same as a small one.
+    """
+    from .wsi_reader import open_wsi
 
     local = slide if not slide.startswith("s3://") else wt._download(slide, scratch)
     stem = os.path.splitext(os.path.basename(local))[0]
 
-    with tifffile.TiffFile(local) as tif:
-        base = tif.series[0]
-        levels = list(getattr(base, "levels", None) or [base])
-        l0w, l0h = levels[0].shape[1], levels[0].shape[0]
-        mpp = wt._parse_mpp(tif.pages[0].description or "")
+    reader = open_wsi(local)
+    try:
+        l0w, l0h = reader.dimensions
+        mpp = reader.mpp
         mag = round(10.0 / mpp) if mpp else None
 
-        # whole-slide overview (smallest level) -> JPEG.
-        over_uri, _ = _jpeg_uri(levels[-1].asarray(), quality=82, maxside=overview_max)
+        # whole-slide overview (bounded thumbnail, never a full-res plane) -> JPEG.
+        over_arr, _ = reader.thumbnail(overview_max)
+        over_uri, _ = _jpeg_uri(over_arr, quality=82, maxside=overview_max)
 
-        # one full-res read; every tile is a slice of this array.
-        print(f"[gallery] reading level 0 ({l0w}x{l0h}) once for {len(patches)} patches…",
-              file=sys.stderr)
-        l0 = levels[0].asarray()
-
+        print(f"[gallery] {reader.__class__.__name__}: reading {len(patches)} regions "
+              f"from level 0 ({l0w}x{l0h})…", file=sys.stderr)
         out = []
         for cx, cy, title, desc in patches:
             ox = max(0, min(int(cx) - size // 2, l0w - size))
             oy = max(0, min(int(cy) - size // 2, l0h - size))
-            crop = l0[oy:oy + size, ox:ox + size]
+            crop = reader.read_region((ox, oy), 0, (size, size))   # RGB PIL.Image
             uri, _ = _jpeg_uri(crop, quality=quality, maxside=display_max)
             out.append({
                 "title": title, "desc": desc,
@@ -87,7 +89,8 @@ def build_gallery(slide: str, patches, out_html: str, scratch: str,
                         "w": round(100 * size / l0w, 3), "h": round(100 * size / l0h, 3)},
             })
             print(f"  {title:20s} origin=({ox},{oy}) {len(uri)//1024}KB", file=sys.stderr)
-        del l0
+    finally:
+        reader.close()
 
     mpp_txt = f"{mpp:.4f} µm/px" if mpp else "unknown"
     mag_txt = f"≈ {mag}×" if mag else "unknown"
