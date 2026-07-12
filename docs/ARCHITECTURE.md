@@ -82,13 +82,23 @@ bandwidth to non-AWS hosts (GDC/GCS stall at ~0 MB/s), while AWS↔AWS and AWS�
    wsi_reader.open_wsi  (svs + tiff, one interface, MPP-normalized)
         │
    tile_wsi  — coarse tissue mask → 224px grid @ ~0.5 µm/px → post-tiling FILTERS
-        │      (whitespace / tissue; decoupled + extensible; --max-tiles for trials)
+        │      (whitespace / tissue = "sensible" tiles; --max-tiles for trials)
         ▼
-   H-optimus-0 CLS  [N, 1536]
-        ├─▶ features  → s3://bucketbiolayer/embeddings/wsi/<slide>/hoptimus.npz
-        └─▶ vectors   → h0-vector / index `layerbioindex` (dim 1536, cosine, float32)
-                          → biodiscovery retrieval (QueryVectors)
+   H-optimus-0 per tile: 256 patch tokens + 1 CLS ("257th")   [get_intermediate_layers]
+        │
+        ├─▶ GLOBAL list — CLS, one 1536-d vector/tile (fp32)
+        │      per slide → embeddings/wsi/<slide>/global.npz  (+ legacy hoptimus.npz)
+        │      combined  → embeddings/lists/global.npz          (LIST 1, all tiles/slides)
+        │      + push    → h0-vector / index `layerbioindex` (dim 1536, cosine) → QueryVectors
+        └─▶ PATCH  list — 256 vectors/tile, tile-major then patch-row-major (fp16)
+               per slide → embeddings/wsi/<slide>/patch_vectors.npy (memmap) + patch_meta.npz
+               combined  → embeddings/lists/patch.manifest.json     (LIST 2, sharded, in order)
 ```
+
+Both come out as **ordered, rerankable** `OrderedVectorList`s ([`biolayer/vectors`](../biolayer/vectors)):
+vectors + row-aligned metadata + a mutable `order`, so a future mech-interp scoring pass calls
+`rerank(scores)` to permute only the order — the (potentially tens-of-GB) PATCH list stays on
+its per-slide memmap shards and only the top-k rows a rerank touches are gathered.
 
 The reader is **format-agnostic** (OpenSlide primary, tifffile fallback) so `.svs` and
 `.tiff` never branch; the filter stage is a first-class registry applied inline or
@@ -148,6 +158,7 @@ Every tile is embedded at **3 depths** × **{global CLS, local mean-patch}**. Da
 | [`biolayer/data/extract.py`](../biolayer/data/extract.py) | CLI: tile → `.npz` embeddings, optional S3 upload |
 | [`biolayer/data/s3_utils.py`](../biolayer/data/s3_utils.py) | Shared S3 artifact channel |
 | [`biolayer/data/wsi_ingest.py`](../biolayer/data/wsi_ingest.py) | Idempotent slide ingest → S3 (GDC UUID or any URL) |
+| [`biolayer/vectors/ordered_list.py`](../biolayer/vectors/ordered_list.py) | The two ordered, rerankable lists (GLOBAL/CLS + PATCH); sharded memmap backing + `rerank()` |
 | [`biolayer/data/wsi_reader.py`](../biolayer/data/wsi_reader.py) | Format-agnostic WSI reader (`.svs`+`.tiff`), MPP-normalized |
 | [`biolayer/data/tile_wsi.py`](../biolayer/data/tile_wsi.py) | Tissue-masked tiling + decoupled post-tiling filter stage |
 | [`biolayer/causal/`](../biolayer/causal) | The battery: `probe`, `intervene`, `battery`, `confound`, `attribution` |

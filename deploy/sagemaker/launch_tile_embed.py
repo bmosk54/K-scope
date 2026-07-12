@@ -49,9 +49,12 @@ def main():
     ap.add_argument("--filters", default="whitespace,tissue")
     ap.add_argument("--mpp", default="0.5")
     ap.add_argument("--tile-px", default="224")
-    ap.add_argument("--max-tiles", type=int, help="cap kept tiles (quick trial run)")
+    ap.add_argument("--max-tiles", type=int, help="cap kept tiles (quick trial run); "
+                    "omit to embed ALL sensible tiles")
+    ap.add_argument("--patch-dtype", default="float16",
+                    help="dtype for the 256-vector PATCH list (float16 halves size/RAM vs float32)")
     ap.add_argument("--vector-index", default="layerbioindex",
-                    help="h0-vector index (dim 1536, cosine); set '' to skip vector push")
+                    help="h0-vector index for the GLOBAL/CLS list (dim 1536, cosine); '' to skip")
     ap.add_argument("--region", default=os.environ.get("AWS_DEFAULT_REGION", "us-west-2"))
     args = ap.parse_args()
     if not args.role:
@@ -65,6 +68,7 @@ def main():
     env = {
         "SLIDES_S3": ",".join(args.slides), "SM_BUCKET": BUCKET,
         "FILTERS": args.filters, "MPP": args.mpp, "TILE_PX": args.tile_px,
+        "PATCH_DTYPE": args.patch_dtype,
     }
     if args.max_tiles:
         env["MAX_TILES"] = str(args.max_tiles)
