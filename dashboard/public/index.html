@@ -3,7 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>BioLayer — Causal Evidence Cockpit</title>
+<title>KScope — Causal Evidence Cockpit</title>
+<script>
+  // Apply the saved (or system) theme before first paint to avoid a flash.
+  (function () { try {
+    var t = localStorage.getItem("kscope:theme");
+    if (t) document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {} })();
+</script>
 <link rel="stylesheet" href="style.css" />
 <script src="d3.v7.min.js"></script>
 </head>
@@ -13,9 +20,9 @@
   <!-- ============================================================ SIDEBAR -->
   <div class="sidebar">
     <div class="brand">
-      <div class="brand-mark">BL</div>
+      <div class="brand-mark">KS</div>
       <div>
-        <div class="brand-name">BioLayer</div>
+        <div class="brand-name">KScope</div>
         <div class="brand-tag">causal microscope</div>
       </div>
     </div>
@@ -44,13 +51,18 @@
         <div class="topbar-title" id="topbar-title">Case</div>
         <div class="topbar-tag" id="topbar-tag">one claim, followed end to end</div>
       </div>
+      <div class="topbar-right">
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle light or dark theme">
+          <span class="tt-ico">🌓</span><span id="theme-label">Dark</span> mode
+        </button>
+      </div>
     </div>
 
     <!-- ============================== INFERENCE CONSOLE (slide -> answer -> certify) -->
     <div class="console">
       <div class="infer-grid">
         <div class="slide-col">
-          <div class="col-label">Input tile · <span class="dimlabel">one 224px NCT-CRC-HE tile — frozen phikon-v2 reads this</span></div>
+          <div class="col-label">Input tile · <span class="dimlabel" id="slide-reader">one 224px NCT-CRC-HE tile — frozen phikon-v2 reads this</span></div>
           <img id="slide-img" class="slide-img" src="input_tile.png" alt="one 224px NCT-CRC-HE colorectal H&E tile" />
           <div class="slide-meta" id="slide-meta">loading tile…</div>
         </div>
@@ -327,5 +339,29 @@
 <script src="data.js"></script>
 <script src="app.js"></script>
 <script src="research.js"></script>
+<script>
+  // Light/dark toggle. Label shows the mode you'll switch TO. Persists to localStorage
+  // (shared with the Studio + Certify Console) and follows the OS default until overridden.
+  (function () {
+    var root = document.documentElement,
+        btn = document.getElementById("theme-toggle"),
+        lab = document.getElementById("theme-label");
+    var mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+    function current() {
+      var t = root.getAttribute("data-theme");
+      if (t) return t;
+      return mq && mq.matches ? "dark" : "light";
+    }
+    function sync() { if (lab) lab.textContent = current() === "dark" ? "Light" : "Dark"; }
+    sync();
+    if (btn) btn.addEventListener("click", function () {
+      var next = current() === "dark" ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem("kscope:theme", next); } catch (e) {}
+      sync();
+    });
+    if (mq && mq.addEventListener) mq.addEventListener("change", sync);
+  })();
+</script>
 </body>
 </html>

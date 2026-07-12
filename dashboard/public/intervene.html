@@ -3,7 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>BioLayer — Intervention Studio</title>
+<title>KScope — Intervention Studio</title>
+<script>
+  // Follow the theme the user picked in the cockpit (shared localStorage), applied pre-paint.
+  (function () { try {
+    var t = localStorage.getItem("kscope:theme");
+    if (t) document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {} })();
+</script>
 <link rel="stylesheet" href="style.css" />
 <link rel="stylesheet" href="intervene.css" />
 <script src="d3.v7.min.js"></script>
