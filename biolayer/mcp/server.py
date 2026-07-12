@@ -172,6 +172,24 @@ def confound(model: str = "phikon_v2", split: str = "train",
     return verbs.confound_verb(model, split, pos, neg)
 
 
+@mcp.tool()
+def embed(images: list = None, s3_tiles: list = None, slide_s3: str = None,
+          keys: list = None, push_index: str = None, slide_name: str = "query",
+          max_tiles: int = 16, mpp: float = 0.5) -> dict:
+    """Embed NEW pathology tiles on demand through the warm H-optimus-0 endpoint.
+
+    The live bridge into the frozen substrate: turn fresh tissue — base64 tile bytes
+    (`images`), S3 tile keys (`s3_tiles`), or a slide URI (`slide_s3`, bounded by
+    `max_tiles`) — into 1536-d CLS vectors WITHOUT re-downloading the 4 GB model per call
+    (it stays warm on a g5 endpoint). Set `push_index` to also write the vectors into that
+    h0-vector index so a query tile becomes searchable alongside the cohort. Provide exactly
+    one source. Returns status='unavailable' (never errors) if the endpoint isn't deployed.
+    """
+    return verbs.embed(images=images, s3_tiles=s3_tiles, slide_s3=slide_s3, keys=keys,
+                       push_index=push_index, slide_name=slide_name,
+                       max_tiles=max_tiles, mpp=mpp)
+
+
 def main():
     mcp.run()  # stdio transport
 
