@@ -16,27 +16,31 @@ cd "$(dirname "$0")"
 export PORT="${PORT:-4173}"
 export PYTHON="${PYTHON:-python3}"
 
-# Pick a Python with the backend libs — numpy (certify bridge) + boto3 (gallery fetch).
-# server.js inherits this exported PYTHON for the certify bridge, so one capable interpreter
-# covers both. If none is found, warn upfront (and each tool re-warns at point of use).
-for cand in "$PYTHON" python3 "$HOME/miniconda3/envs/owkin-env/bin/python"; do
-  if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import numpy, boto3' 2>/dev/null; then
+# Pick a Python that can run the warm Flask backend (app_server.py): it serves the UI AND
+# every /api route the front-end submit calls (answer / optimize_prompt / verb / certify).
+# Needs flask + numpy (certify) + boto3 (gallery fetch). If none is found, warn upfront.
+for cand in "$PYTHON" "$HOME/miniconda3/envs/owkin-env/bin/python" python3; do
+  if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import flask, numpy, boto3' 2>/dev/null; then
     PYTHON="$cand"; export PYTHON; break
   fi
 done
-if ! "$PYTHON" -c 'import numpy' 2>/dev/null; then
-  echo "WARNING: '$PYTHON' is missing backend libs (numpy) — certify and the Slide Gallery" >&2
-  echo "         will be unavailable. Fix: pip install -r requirements.txt boto3, or point" >&2
-  echo "         PYTHON at a capable interpreter: PYTHON=<python> bash dashboard/serve.sh" >&2
+if ! "$PYTHON" -c 'import flask, numpy' 2>/dev/null; then
+  echo "WARNING: '$PYTHON' is missing backend libs (flask/numpy) — the dashboard API (Submit," >&2
+  echo "         certify, autoresearch) will be unavailable. Fix: pip install flask numpy boto3," >&2
+  echo "         or point PYTHON at a capable interpreter: PYTHON=<python> bash dashboard/serve.sh" >&2
 fi
 
 # Pull the prebuilt patch galleries (cached in S3, not in git — 15-22 MB each) into public/
 # so the Slide Gallery resolves without a rebuild. Best-effort: won't block startup.
 "$PYTHON" fetch_galleries.py || true
 
+# Launch the warm Flask backend (biolayer imported once at startup). Replaces the old
+# zero-dep node server.js, which only exposed /api/all + /api/certify_answer and 404'd the
+# Submit-tile routes (/api/answer, /api/optimize_prompt, /api/verb/*) as plain text.
 pkill -f "node server.js" 2>/dev/null || true
+pkill -f "app_server.py" 2>/dev/null || true
 sleep 1
-nohup node server.js > /tmp/biolayer-dashboard.log 2>&1 &
+nohup "$PYTHON" app_server.py > /tmp/biolayer-dashboard.log 2>&1 &
 sleep 2
 
 # best-effort: surface the Studio proxy URL from the app metadata
