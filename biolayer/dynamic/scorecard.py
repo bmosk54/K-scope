@@ -95,7 +95,11 @@ def _necessity(bc, layered, live=None):
                 for c in layered["curve"]]
         if gaps:
             bites_layer = max(gaps)[1]
-    score = _clip01(eff)
+    # readout-only necessity is near-tautological (projecting out a ~1-D probe's own axis
+    # always collapses to chance), so cap the NUMERIC score too — not just the verdict —
+    # or a redundancy-limited concept reads as necessity=1.0. Graded per-slide necessity
+    # (the live source-intervention path above) is unaffected.
+    score = _clip01(min(eff, 0.5) if bites_layer == "readout" else eff)
     p = _p_from_z(z)
     if bites_layer == "readout":
         v = WEAK if eff > 0.0 else NULL
