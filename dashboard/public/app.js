@@ -22,6 +22,10 @@
   let selectedIdx = certifiable.findIndex((c) => c.id === "tils");
   if (selectedIdx < 0) selectedIdx = 0;
 
+  // Answer-Flow (Sankey + claim rail) state
+  let railSelectedId = null;   // id of the rail row that's highlighted (certifiable or declined)
+  let sankeyRaf = null;        // handle for the drifting-particle animation loop
+
   // Backend base URL. Default "" = same-origin (works when the whole Node server is
   // port-forwarded to localhost). Override to point the UI at a separately-forwarded
   // SageMaker API: set window.API_BASE, or open the page with ?api=http://localhost:4173
@@ -34,6 +38,7 @@
     certifiable = window.CARD.claims.filter((c) => !!c.scores);
     declinedCount = window.CARD.claims.filter((c) => !c.scores).length;
     selectedIdx = Math.min(selectedIdx, Math.max(0, certifiable.length - 1));
+    railSelectedId = null; // re-derive from the fresh card on next rail render
   }
 
   // ---------------------------------------------------------------- utils
@@ -90,12 +95,14 @@
 
   function selectClaim(idx) {
     selectedIdx = ((idx % certifiable.length) + certifiable.length) % certifiable.length;
+    railSelectedId = currentClaim().id;
     hideTip();
     renderClaimStrip();
     renderHistology();
     renderQuadrantSelection();
     renderNecessityChart();
     renderVerdict();
+    highlightRail();
   }
   function selectClaimById(id) {
     const idx = certifiable.findIndex((c) => c.id === id);
@@ -537,6 +544,276 @@
       .on("mouseout", hideTip);
   }
 
+  // ---------------------------------------------------------------- answer flow: sankey + claim rail
+  const VERDICT_ORDER = { GROUNDED: 0, WEAK: 1, NOT_CERTIFIABLE: 2 };
+  const SANKEY_ACCENT = "#7c9dff"; // neutral source-node tone, distinct from all 3 verdict colors
+
+  // Group certifiable claims by concept (splitting a concept into separate nodes if its
+  // claims ever disagree on verdict), then append one synthetic node absorbing ALL declined
+  // claims. Returns {groups, verdictCount, total}.
+  function buildFlowModel() {
+    const claims = window.CARD.claims;
+    const cert = claims.filter((c) => !!c.scores);
+    const declined = claims.filter((c) => !c.scores);
+
+    const gmap = new Map();
+    cert.forEach((c) => {
+      const key = c.concept + "||" + c.verdict;
+      if (!gmap.has(key)) gmap.set(key, { concept: c.concept, verdict: c.verdict, count: 0, synthetic: false });
+      gmap.get(key).count++;
+    });
+    let groups = [...gmap.values()].sort(
+      (a, b) => VERDICT_ORDER[a.verdict] - VERDICT_ORDER[b.verdict] || a.concept.localeCompare(b.concept)
+    );
+    if (declined.length) {
+      groups.push({ concept: "cell/subcellular", verdict: "NOT_CERTIFIABLE", count: declined.length, synthetic: true });
+    }
+
+    const verdictCount = { GROUNDED: 0, WEAK: 0, NOT_CERTIFIABLE: 0 };
+    groups.forEach((g) => (verdictCount[g.verdict] += g.count));
+    return { groups, verdictCount, total: claims.length };
+  }
+
+  function conceptLabel(g) {
+    if (g.synthetic) return `cell/subcellular (${g.count})`;
+    const name = g.concept.replace(/_/g, " ");
+    return g.count > 1 ? `${name} (${g.count} claims)` : name;
+  }
+
+  function renderSankey() {
+    const container = document.getElementById("sankey-chart");
+    if (!container) return;
+    if (sankeyRaf) { cancelAnimationFrame(sankeyRaf); sankeyRaf = null; }
+    container.innerHTML = "";
+
+    const { groups, verdictCount, total } = buildFlowModel();
+    const verdicts = ["GROUNDED", "WEAK", "NOT_CERTIFIABLE"];
+
+    const W = Math.max(460, container.clientWidth || 640);
+    const H = 344;
+    const nodeW = 14, pad = 18;
+    const margin = { left: 4, right: 152, top: 10, bottom: 10 };
+    const availH = H - margin.top - margin.bottom;
+    const maxNodes = Math.max(1, groups.length, verdicts.length);
+    const ky = (availH - (maxNodes - 1) * pad) / total; // px per claim
+
+    const x0 = margin.left;
+    const x2 = W - margin.right;
+    const x1 = x0 + (x2 - x0) * 0.4;
+
+    // node objects
+    const srcNode = { id: "src", label: "K-Pro answer", value: total, verdict: null, x: x0 };
+    const conceptNodes = groups.map((g, i) => ({
+      id: "g" + i, label: conceptLabel(g), value: g.count, verdict: g.verdict, x: x1,
+    }));
+    const verdictNodes = verdicts.map((v) => ({
+      id: v, label: v, value: verdictCount[v], verdict: v, x: x2, isVerdict: true,
+    }));
+
+    // stack a column vertically, centered in the available height
+    function layoutColumn(nodes) {
+      const stackH = nodes.reduce((s, n) => s + n.value * ky, 0) + (nodes.length - 1) * pad;
+      let y = margin.top + (availH - stackH) / 2;
+      nodes.forEach((n) => { n.h = n.value * ky; n.y = y; n.sy = y; n.ty = y; y += n.h + pad; });
+    }
+    layoutColumn([srcNode]);
+    layoutColumn(conceptNodes);
+    layoutColumn(verdictNodes);
+
+    // links: source -> concept, concept -> verdict (iterate in node order so ribbons stack cleanly)
+    const links = [];
+    conceptNodes.forEach((cn) => links.push({ s: srcNode, t: cn, value: cn.value, verdict: cn.verdict }));
+    conceptNodes.forEach((cn) => {
+      const vn = verdictNodes.find((v) => v.id === cn.verdict);
+      links.push({ s: cn, t: vn, value: cn.value, verdict: cn.verdict });
+    });
+    links.forEach((l) => {
+      l.w = l.value * ky;
+      l.x0 = l.s.x + nodeW;
+      l.x1 = l.t.x;
+      l.y0 = l.s.sy + l.w / 2; l.s.sy += l.w;
+      l.y1 = l.t.ty + l.w / 2; l.t.ty += l.w;
+    });
+    const linkPath = (l) => {
+      const xm = (l.x0 + l.x1) / 2;
+      return `M${l.x0},${l.y0} C${xm},${l.y0} ${xm},${l.y1} ${l.x1},${l.y1}`;
+    };
+
+    const svg = d3.select(container).append("svg").attr("viewBox", `0 0 ${W} ${H}`).attr("height", H);
+
+    // links
+    const linkSel = svg
+      .append("g")
+      .selectAll("path")
+      .data(links)
+      .join("path")
+      .attr("class", "sankey-link")
+      .attr("d", linkPath)
+      .attr("stroke", (l) => COLOR[l.verdict])
+      .attr("stroke-width", (l) => Math.max(1, l.w))
+      .attr("stroke-opacity", 0.35)
+      .on("mouseover", function (event, l) {
+        d3.select(this).attr("stroke-opacity", 0.75);
+        showTip(
+          event,
+          `<div class="tt-title">${l.s.label} → ${l.t.label}</div>` +
+            `<div class="tt-row"><span>claims</span><span>${l.value}</span></div>`
+        );
+      })
+      .on("mousemove", moveTip)
+      .on("mouseout", function () { d3.select(this).attr("stroke-opacity", 0.35); hideTip(); });
+
+    // nodes
+    const allNodes = [srcNode, ...conceptNodes, ...verdictNodes];
+    svg
+      .append("g")
+      .selectAll("rect")
+      .data(allNodes)
+      .join("rect")
+      .attr("class", "sankey-node")
+      .attr("x", (n) => n.x)
+      .attr("y", (n) => n.y)
+      .attr("width", nodeW)
+      .attr("height", (n) => Math.max(1, n.h))
+      .attr("rx", 2)
+      .attr("fill", (n) => (n.verdict ? COLOR[n.verdict] : SANKEY_ACCENT))
+      .on("mouseover", function (event, n) {
+        showTip(event, `<div class="tt-title">${n.label}</div><div class="tt-row"><span>claims</span><span>${n.value}</span></div>`);
+      })
+      .on("mousemove", moveTip)
+      .on("mouseout", hideTip);
+
+    // labels — concept column (smaller), verdict column (larger/bolder), source (right of node w/ bg)
+    function nodeLabel(sel, nodes, size, weight, fill) {
+      sel
+        .selectAll("text")
+        .data(nodes.filter((n) => n.h > 0.5))
+        .join("text")
+        .attr("class", "sankey-nlabel")
+        .attr("x", (n) => n.x + nodeW + 8)
+        .attr("y", (n) => n.y + n.h / 2)
+        .attr("dominant-baseline", "middle")
+        .style("font-size", size)
+        .style("font-weight", weight)
+        .attr("fill", fill)
+        .text((n) => n.label);
+    }
+    nodeLabel(svg.append("g"), conceptNodes, "11.5px", 500, "var(--text-dim)");
+    nodeLabel(svg.append("g"), verdictNodes, "12.5px", 700, "var(--text)");
+
+    // source label: sits over the link fan, so give it a small backing rect for legibility
+    const srcG = svg.append("g");
+    const srcLabelX = srcNode.x + nodeW + 8;
+    const srcLabelY = srcNode.y + srcNode.h / 2;
+    srcG
+      .append("rect")
+      .attr("x", srcLabelX - 5)
+      .attr("y", srcLabelY - 11)
+      .attr("width", 96)
+      .attr("height", 22)
+      .attr("rx", 4)
+      .attr("fill", "var(--panel)")
+      .attr("fill-opacity", 0.82);
+    srcG
+      .append("text")
+      .attr("class", "sankey-nlabel")
+      .attr("x", srcLabelX)
+      .attr("y", srcLabelY)
+      .attr("dominant-baseline", "middle")
+      .style("font-size", "11.5px")
+      .style("font-weight", 600)
+      .attr("fill", SANKEY_ACCENT)
+      .text(srcNode.label);
+
+    // subtle drifting particles — one per link, "claims are flowing" (getPointAtLength loop)
+    const pathEls = linkSel.nodes();
+    const particles = pathEls.map((el, i) => ({ el, len: el.getTotalLength(), off: (i * 0.37) % 1, verdict: links[i].verdict }));
+    const dotSel = svg
+      .append("g")
+      .selectAll("circle")
+      .data(particles)
+      .join("circle")
+      .attr("r", 2.2)
+      .attr("fill", (d) => COLOR[d.verdict])
+      .attr("opacity", 0.9);
+    let last = null;
+    function tick(ts) {
+      if (last === null) last = ts;
+      const dt = Math.min(0.05, (ts - last) / 1000); // clamp to survive tab-switch pauses
+      last = ts;
+      dotSel.each(function (d) {
+        d.off = (d.off + dt * 0.14) % 1;
+        const p = d.el.getPointAtLength(d.off * d.len);
+        d3.select(this).attr("cx", p.x).attr("cy", p.y);
+      });
+      sankeyRaf = requestAnimationFrame(tick);
+    }
+    sankeyRaf = requestAnimationFrame(tick);
+  }
+
+  function renderClaimRail() {
+    const rail = document.getElementById("claim-rail");
+    if (!rail) return;
+    if (railSelectedId === null) railSelectedId = currentClaim().id;
+    rail.innerHTML = "";
+    const sel = d3.select(rail);
+
+    const rows = sel
+      .selectAll(".rail-row")
+      .data(window.CARD.claims)
+      .join("div")
+      .attr("class", (c) => "rail-row" + (c.scores ? "" : " declined"))
+      .attr("data-id", (c) => c.id)
+      .on("click", (event, c) => {
+        if (c.scores) {
+          selectClaimById(c.id); // drives histology + quadrant + necessity + verdict
+        } else {
+          railSelectedId = c.id; // declined: highlight only — no battery ran, nothing to drive
+          highlightRail();
+        }
+      });
+
+    rows.append("div").attr("class", "rail-dot").style("background", (c) => COLOR[c.verdict]);
+
+    const txt = rows.append("div").attr("class", "rail-text");
+    txt.append("div").attr("class", "rail-claim").text((c) => c.claim);
+    txt
+      .append("div")
+      .attr("class", "rail-sub")
+      .text((c) => (c.scores ? (c.concept || "").replace(/_/g, " ") : c.reason || "not certifiable"));
+
+    // mini battery: 3 bars for certifiable, one flat neutral bar for declined
+    const bars = rows.append("div").attr("class", "rail-bars");
+    bars.each(function (c) {
+      const g = d3.select(this);
+      if (c.scores) {
+        [c.scores.necessity, c.scores.sufficiency, c.scores.specificity].forEach((v) => {
+          g.append("div")
+            .attr("class", "rail-bar")
+            .style("height", Math.max(3, (v || 0) * 22) + "px")
+            .style("background", COLOR[c.verdict]);
+        });
+      } else {
+        g.append("div").attr("class", "rail-bar declined").style("height", "4px");
+      }
+    });
+
+    highlightRail();
+  }
+
+  function highlightRail() {
+    d3.selectAll("#claim-rail .rail-row").classed("selected", function () {
+      return this.getAttribute("data-id") === railSelectedId;
+    });
+  }
+
+  function renderAnswerFlow() {
+    const badge = document.getElementById("aflow-badge");
+    if (badge) badge.textContent = window.CARD.coverage.summary;
+    renderSankey();
+    renderClaimRail();
+  }
+
   // ---------------------------------------------------------------- proof: probe design appendix
   function renderProbeAppendix() {
     document.getElementById("probe-sub").textContent =
@@ -657,7 +934,7 @@
       document.getElementById("topbar-title").textContent = meta.title;
       document.getElementById("topbar-tag").textContent = meta.tag;
     }
-    if (id === "proof") { renderQuadrant(); renderQuadrantSelection(); renderNecessityChart(); }
+    if (id === "proof") { renderAnswerFlow(); renderQuadrant(); renderQuadrantSelection(); renderNecessityChart(); }
   }
 
   function initNavigation() {
@@ -670,6 +947,7 @@
   function renderAll() {
     renderClaimStrip();
     renderHistology();
+    renderAnswerFlow();
     renderQuadrant();
     renderNecessityChart();
     renderProbeAppendix();
@@ -750,6 +1028,12 @@
       if (d.error) throw new Error(d.error);
       window.CARD = d.CARD; recomputeState(); setLiveBadge(true);
       document.body.classList.remove("no-card");        // reveal the evidence card
+      // hand the REAL certified card to the Intervention Studio (separate page) so its
+      // layer visualisation runs on this exact run, not the mock.
+      try {
+        localStorage.setItem("biolayer:lastCard", JSON.stringify({
+          card: d.CARD, track: $c("c-track").value, at: new Date().toISOString() }));
+      } catch (e) { /* storage unavailable — Studio falls back to /api/all */ }
       renderAll(); goToView("case");
       setStatus(d.CARD.coverage.summary + " · " + (d.CARD.certification_scope || {}).level);
     } catch (e) { setStatus("certify failed: " + e.message); }
@@ -834,6 +1118,7 @@
     window.addEventListener("resize", () => {
       renderHistology();
       if (document.getElementById("view-proof").classList.contains("active")) {
+        renderAnswerFlow();
         renderQuadrant();
         renderQuadrantSelection();
         renderNecessityChart();

@@ -139,5 +139,116 @@ def warmup(model_key="phikon_v2", ref_classes=DEFAULT_REF_CLASSES, split="train"
 def status():
     return {"encoders_resident": list(_ENCODERS),
             "reference_sets_cached": len(_REF),
+            "slide_models_precomputed": len(_SLIDE),
             "embeddings_cached_in_ram": len(loader._NPZ_CACHE),
             "cache_dir": _CACHE_DIR}
+
+
+# ===========================================================================
+# Per-slide inference — ONE slide in (its tiles), readout distribution + per-slide
+# necessity out. The readout probe and the per-class concept axes are PRECOMPUTED
+# ONCE from a labeled reference (so the input slide needs no labels), then only the
+# slide's tiles are forward-passed at inference.
+# ===========================================================================
+_SLIDE = {}     # (model_key, classes, per_class, split) -> precomputed readout+axes
+
+
+def precompute_slide(model_key="phikon_v2", classes=DEFAULT_REF_CLASSES, per_class=40,
+                     split="train", ref=None):
+    """Fit — ONCE — the multiclass readout probe + per-class per-layer concept axes from
+    a labeled reference (live-embedded so the representation matches the forward pass).
+    Cached; the slide being certified never touches this."""
+    import numpy as np
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+    from .causal import probe as _probe
+
+    key = (model_key, tuple(classes), per_class, split)
+    if key in _SLIDE:
+        return _SLIDE[key]
+    enc = warm_encoder(model_key)
+    ref = ref or reference(model_key, classes, per_class, split, seed=1)
+    imgs, labs = ref["images"], np.asarray(ref["labels"])
+    readout, hidden = enc.hidden_cls(imgs)                 # (N,dim), (N,L+1,dim)
+
+    scaler = StandardScaler().fit(readout)
+    clf = LogisticRegression(max_iter=3000).fit(scaler.transform(readout), labs)  # multinomial
+    cn = config.CLASS_NAMES
+    layer_idx = list(config.MODELS[model_key]["layers"])
+    axes = {}                                               # class-name -> {layer: unit dir}
+    for c in classes:
+        ci = cn.index(c)
+        y = (labs == ci).astype(int)                       # class-vs-rest
+        if y.sum() < 2 or (1 - y).sum() < 2:
+            continue
+        axes[c] = {L: _probe.diff_of_means(hidden[:, L, :], y) for L in layer_idx}
+    _SLIDE[key] = {"scaler": scaler, "clf": clf, "class_names": cn,
+                   "cols": {cn[c]: j for j, c in enumerate(clf.classes_)},
+                   "axes": axes, "layers": layer_idx}
+    return _SLIDE[key]
+
+
+def slide_readout_distribution(pre, readout):
+    """Mean softmax over the slide's tiles -> {class: probability}."""
+    P = pre["clf"].predict_proba(pre["scaler"].transform(readout)).mean(0)
+    return {cn: float(P[j]) for cn, j in pre["cols"].items()}
+
+
+def certify_slide(model_key="phikon_v2", slide_images=None, concepts=None, n_null=10,
+                  seed=0, pre=None):
+    """ONE slide in (its H&E tiles) -> readout distribution + per-slide necessity.
+
+    Embeds the slide's tiles once, reports the readout class distribution, then for each
+    concept edits THIS slide's real forward pass (project the precomputed class axis out
+    of the CLS in the residual stream, propagate) and measures the drop in the slide's
+    readout probability for that class vs a matched-random null. intervened_on_input=True.
+    The slide carries NO labels — axis + probe come from the precomputed reference.
+    """
+    import numpy as np
+    from .causal import live as _live
+    from .causal import probe as _probe
+
+    pre = pre or precompute_slide(model_key)
+    enc = warm_encoder(model_key)
+    clean_readout, _ = enc.hidden_cls(slide_images)
+
+    def meanP(readout):
+        return pre["clf"].predict_proba(pre["scaler"].transform(readout)).mean(0)
+    P0 = meanP(clean_readout)
+    dist = {cn: float(P0[j]) for cn, j in pre["cols"].items()}
+
+    concepts = concepts or list(pre["axes"])
+    per_concept = {}
+    for c in concepts:
+        if c not in pre["axes"] or c not in pre["cols"]:
+            continue
+        j = pre["cols"][c]
+        base = float(P0[j])
+        curve = []
+        for L in pre["layers"]:
+            axis = pre["axes"][c][L]
+            block = L - 1
+            abl = float(meanP(enc.embed(slide_images, edit=_live.project_out(axis),
+                                        block_idx=block))[j])
+            R = _probe.matched_random_dirs(axis.shape[0], n_null, seed=seed)
+            null = np.array([float(meanP(enc.embed(slide_images,
+                             edit=_live.project_out(r), block_idx=block))[j]) for r in R])
+            concept_drop = base - abl
+            null_drops = base - null
+            nm, ns = float(null_drops.mean()), float(null_drops.std())
+            gap = concept_drop - nm
+            curve.append({"block": block, "base_P": round(base, 3),
+                          "concept_ablated_P": round(abl, 3),
+                          "random_ablated_P_mean": round(float(null.mean()), 3),
+                          "necessity_gap": round(gap, 4),
+                          "z": round(gap / (ns + 1e-9), 2),
+                          "bites": bool(gap > 0 and gap / (ns + 1e-9) >= 1.645)})
+        per_concept[c] = {"readout_prob": base, "curve": curve}
+
+    return {"model": model_key, "n_tiles": len(slide_images),
+            "intervened_on_input": True,
+            "readout_distribution": dist,
+            "per_concept_necessity": per_concept,
+            "note": "one slide in; readout distribution + per-slide necessity by editing "
+                    "THIS slide's real forward pass (axis + probe precomputed from a "
+                    "labeled reference; the slide carries no labels)"}

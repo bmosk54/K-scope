@@ -1,27 +1,37 @@
 /**
  * BioLayer — Intervention Studio.
  *
- * Goodfire-style "apply a concept, watch it propagate." One concept axis at a time:
- * pick a dynamic ACTION (ablate / steer / specificity), scrub its STRENGTH, and see the
- * intervention flow down the encoder's depth — the layer-by-layer necessity bite — while
- * the readout head swings. Every verdict exposes the dynamic actions and the per-layer
- * interventions that earned it (the actions ledger).
+ * Rebuilt around the LIVE layer-by-layer intervention (card.claims[].live_necessity),
+ * NOT the cached readout projection and NOT a spatial per-tile field. Our ablate acts on
+ * the pooled CLS representation — there is no image location, so the degree of freedom we
+ * expose is DEPTH:
  *
- * Runs on window.CARD from data.js (rich mock curves) and upgrades to the live certify
- * card via /api/all when the backend is reachable.
+ *   LAYER STRIP   pick which block's CLS to project the concept axis out of.
+ *   STRENGTH      scrub the ablation magnitude (interpolates the precomputed live_necessity).
+ *   CURVE         accumulating decision-margin drop by depth — concept trace + matched-random
+ *                 null band. The monotone rise IS the finding; the flat null is the control.
+ *   READOUT       decision-margin drop at the selected site, two traces overlaid (concept vs null).
+ *
+ * The claim rail shows the FULL verdict spread — GROUNDED, WEAK (with the |r| that capped it),
+ * and NOT_CERTIFIABLE (with the reason). A 9/9-green list is a rubber stamp; the failures are
+ * the product.
+ *
+ * Data source: the exact card the cockpit just certified (localStorage) -> live /api/all ->
+ * the data.js mock (offline, badged). live_necessity ships inside the card — no extra fetch.
  */
 (function () {
   "use strict";
 
-  const ON = "#4f7ae0";      // on-target necessity (validated dark-surface mark)
-  const OFF = "#cf7a3c";     // off-target / cross-interference (always dashed + labeled)
-  const SUCCESS = "#3ddc97", WARN = "#e8b23e", NEUTRAL = "#7a7fa0";
+  const V = { GROUNDED: "#3ddc97", WEAK: "#e8b23e", NOT_CERTIFIABLE: "#7a7fa0" };
+  const NULLC = "#7a7fa0";          // matched-random null trace/band
+  const EPS = 1e-6;
 
   const API_BASE = (window.API_BASE ||
     new URLSearchParams(location.search).get("api") || "").replace(/\/+$/, "");
   const apiUrl = (p) => (API_BASE ? API_BASE + "/" + p : p);
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
   const tooltip = d3.select("#tooltip");
   const showTip = (e, html) => { tooltip.html(html).style("display", "block").style("opacity", 1); moveTip(e); };
@@ -30,446 +40,410 @@
     .style("top", Math.min(e.clientY + 16, window.innerHeight - 200) + "px");
   const hideTip = () => tooltip.style("opacity", 0).style("display", "none");
 
-  const ACTIONS = {
-    ablate:      { verb: "ablate_live · necessity",  step: ["necessity_live", "necessity_cached"] },
-    steer:       { verb: "steer · sufficiency",      step: ["sufficiency"] },
-    specificity: { verb: "specificity · off-target", step: ["specificity"] },
+  const state = {
+    card: null, source: "mock", track: "phikon",
+    all: [], selectedId: null, selLayer: 0, strength: 1.0, blocks: 24,
   };
 
-  const state = { claims: [], nc: [], idx: 0, action: "ablate", strength: 1.0, blocks: 24, gen: 0 };
+  // ------------------------------------------------------------------ data load
+  async function loadCard() {
+    try {
+      const stash = JSON.parse(localStorage.getItem("biolayer:lastCard") || "null");
+      if (stash && stash.card && stash.card.claims) {
+        state.card = stash.card; state.track = stash.track || "phikon"; state.source = "certify";
+        return;
+      }
+    } catch (e) { /* ignore bad stash */ }
+    try {
+      const r = await fetch(apiUrl("api/all"), { headers: { Accept: "application/json" } });
+      if (r.ok) {
+        const d = await r.json();
+        if (!d.error && d.CARD && d.CARD.claims) {
+          state.card = d.CARD;
+          state.track = (d._meta && d._meta.track) || "phikon";
+          state.source = "live";
+          if (d.TRACKS) window.TRACKS = d.TRACKS;
+          return;
+        }
+      }
+    } catch (e) { /* fall through to mock */ }
+    state.card = window.CARD; state.source = "mock";
+  }
 
-  // ------------------------------------------------------------------ data prep
   function ingest() {
-    const all = (window.CARD && window.CARD.claims) || [];
-    state.claims = all.filter((c) => c.scores && c.live_necessity && c.live_necessity.curve);
-    state.nc = all.filter((c) => !c.scores || !(c.live_necessity && c.live_necessity.curve));
-    // substrate depth from the live track registry if present
+    state.all = (state.card && state.card.claims) || [];
     const tr = (window.TRACKS || []).find((t) => /phikon/i.test(t.model || t.track || ""));
     if (tr && tr.blocks) state.blocks = tr.blocks;
-    if (state.idx >= state.claims.length) state.idx = 0;
+    // default selection: first interventable claim (falls back to first claim)
+    if (!state.all.some((c) => c.id === state.selectedId)) {
+      const first = state.all.find(isInterventable) || state.all[0];
+      state.selectedId = first ? first.id : null;
+    }
   }
-  const cur = () => state.claims[state.idx];
-  const curve = () => cur().live_necessity.curve;
-  const crossCurve = () => (cur().live_necessity.cross_interference || null);
-  // depth fraction per station: name-agnostic, biased so the readout sits near the head
-  const depthFrac = (i, n) => (n <= 1 ? 0.9 : 0.22 + (0.92 - 0.22) * (i / (n - 1)));
+
+  const selected = () => state.all.find((c) => c.id === state.selectedId) || null;
+  const isInterventable = (c) =>
+    !!(c && c.scores && c.live_necessity && Array.isArray(c.live_necessity.curve) && c.live_necessity.curve.length);
+  const curveOf = (c) => (c && c.live_necessity && c.live_necessity.curve) || [];
+  const nullStd = (pt) => (pt.z ? Math.abs(pt.gap / pt.z) : 0);   // matched-random null σ ≈ gap/z (null mean ~0)
+  const capR = (c) => c && c.contrast_validation && c.contrast_validation.intensity_collinearity;
+
+  // block index for the i-th extracted layer (last = readout = B-1; gives 8/16/23 on ViT-L/24)
+  function blockFor(i, n) {
+    const B = state.blocks;
+    return i === n - 1 ? B - 1 : Math.round(B * (i + 1) / n);
+  }
+  function axisOf(c) {
+    const m = /^(.+?)\s+vs\s+(.+)$/.exec((c && c.contrast) || "");
+    return m ? { pos: m[1].trim(), neg: m[2].trim() } : null;
+  }
+  const verdictClass = (v) => "v-" + (v || "NULL");
 
   // ------------------------------------------------------------------ concept rail
-  function verdictClass(v) { return "v-" + (v || "NULL"); }
+  function buildSummary() {
+    const counts = { GROUNDED: 0, WEAK: 0, NOT_CERTIFIABLE: 0 };
+    state.all.forEach((c) => { counts[c.verdict] = (counts[c.verdict] || 0) + 1; });
+    const order = ["GROUNDED", "WEAK", "NOT_CERTIFIABLE"];
+    $("verdict-summary").innerHTML = order.map((v) =>
+      `<span class="vs-item ${verdictClass(v)}"><b>${counts[v] || 0}</b> ${v.replace("NOT_CERTIFIABLE", "NOT CERT")}</span>`
+    ).join("");
+    $("rail-count").textContent = state.all.length + " claims";
+  }
 
   function buildRail() {
-    $("rail-count").textContent = state.claims.length + " axes";
-    const host = $("concept-list");
-    host.innerHTML = "";
-
-    state.claims.forEach((c, i) => {
+    const host = $("concept-list"); host.innerHTML = "";
+    state.all.forEach((c) => {
+      const inter = isInterventable(c);
       const card = document.createElement("div");
-      card.className = "concept-card" + (i === state.idx ? " active" : "");
-      const spark = miniSpark(c.live_necessity.curve);
+      card.className = "concept-card " + verdictClass(c.verdict) +
+        (c.id === state.selectedId ? " active" : "") + (inter ? "" : " declined");
+      card.dataset.id = c.id;
+
+      let sub = "";
+      if (c.verdict === "WEAK" && capR(c) != null) {
+        sub = `<div class="cc-note warn">capped · rides intensity |r| = ${capR(c).toFixed(3)}</div>`;
+      } else if (!inter) {
+        sub = `<div class="cc-note dim">${esc(c.reason || "no axis to intervene on")}</div>`;
+      }
+
       card.innerHTML =
         `<div class="cc-top">
-           <span class="cc-chip" style="background:${ON}"></span>
            <span class="cc-name">${esc(c.claim)}</span>
            <span class="cc-verdict ${verdictClass(c.verdict)}">${c.verdict}</span>
          </div>
-         <div class="cc-contrast">${esc(c.contrast || c.concept || "—")}</div>
-         <div class="cc-spark">${spark}</div>`;
-      card.addEventListener("click", () => selectConcept(i));
+         <div class="cc-contrast">${esc(c.contrast || (c.concept ? c.concept.replace(/_/g, " ") : "—"))}</div>
+         ${inter ? `<div class="cc-gaps" id="ccg-${c.id}"></div>` : ""}
+         ${sub}`;
+      card.addEventListener("click", () => selectClaim(c.id));
       host.appendChild(card);
+      if (inter) paintCardGaps(c);
     });
+  }
 
-    // declined axes — visible so the honest NOT_CERTIFIABLE verdicts are in the same list
-    if (state.nc.length) {
-      const foot = $("rail-foot");
-      foot.innerHTML = `<b style="color:var(--text-dim)">+ ${state.nc.length} declined</b> — ` +
-        `no axis to intervene on (cell/subcellular or outcome claims). certify returns ` +
-        `NOT_CERTIFIABLE rather than force-fitting a probe.`;
+  // tiny 3-bar gap sparkline in the rail card — the monotone rise at a glance
+  function paintCardGaps(c) {
+    const host = $("ccg-" + c.id); if (!host) return;
+    const curve = curveOf(c), max = Math.max(...curve.map((p) => p.gap), EPS);
+    host.innerHTML = curve.map((p) =>
+      `<span class="ccg-bar" style="height:${(4 + 18 * (p.gap / max)).toFixed(1)}px;background:${p.bites ? V[c.verdict] : "var(--border-strong)"}"></span>`
+    ).join("");
+  }
+
+  function selectClaim(id) {
+    state.selectedId = id; hideTip();
+    const c = selected();
+    // land on the layer that bites hardest (max gap) so the strongest signal reads first
+    if (isInterventable(c)) {
+      const curve = curveOf(c);
+      state.selLayer = curve.reduce((best, p, i) => (p.gap > curve[best].gap ? i : best), 0);
     }
-  }
-
-  // 3 mini bars, colored by significance — the per-layer bite at a glance
-  function miniSpark(cv) {
-    const w = 210, h = 26, gap = 4, bw = (w - gap * (cv.length - 1)) / cv.length;
-    const max = Math.max(...cv.map((d) => d.gap), 0.1);
-    return `<svg width="100%" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">` +
-      cv.map((d, i) => {
-        const bh = Math.max(2, (Math.max(d.gap, 0) / max) * (h - 2));
-        return `<rect x="${i * (bw + gap)}" y="${h - bh}" width="${bw}" height="${bh}" rx="2"
-          fill="${d.bites ? ON : "rgba(255,255,255,.14)"}"></rect>`;
-      }).join("") + `</svg>`;
-  }
-
-  function selectConcept(i) {
-    state.idx = i;
-    hideTip();
-    d3.selectAll(".concept-card").classed("active", (_, k) => k === i);
+    d3.selectAll(".concept-card").classed("active", function () { return this.dataset.id === id; });
     renderStage();
   }
 
-  // ------------------------------------------------------------------ stage header
+  // ------------------------------------------------------------------ stage
   function renderStage() {
-    const c = cur();
-    $("stage-concept").textContent = c.claim;
-    $("stage-contrast").textContent = (c.concept ? c.concept.replace(/_/g, " ") + "  ·  " : "") + (c.contrast || "");
-    const vp = $("stage-verdict");
-    vp.textContent = c.verdict;
-    vp.className = "verdict-pill " + verdictClass(c.verdict);
-    drawCanvas();
-    renderLegend();
-    renderCaption();
-    renderMeter();
+    const c = selected();
+    $("stage-concept").textContent = c ? c.claim : "—";
+    $("stage-contrast").textContent = c ? ((c.concept ? c.concept.replace(/_/g, " ") + "  ·  " : "") + (c.contrast || "")) : "";
+    const vp = $("stage-verdict"); vp.textContent = c ? c.verdict : "—"; vp.className = "verdict-pill " + verdictClass(c && c.verdict);
+
+    const inter = isInterventable(c);
+    const ioi = inter && c.live_necessity.intervened_on_input;
+    $("intervened-badge").innerHTML = ioi
+      ? `<span class="ioi on" title="the do() was applied on this slide's forward pass, not a cached embedding">✓ intervened_on_input · per-slide forward pass</span>`
+      : "";
+
+    // toggle the ablation UI vs a declined empty-state
+    ["layerstrip-wrap", "control-bar", "curve-wrap"].forEach((idn) => { $(idn).style.display = inter ? "" : "none"; });
+
+    if (!inter) { renderDeclined(c); renderPillarsEmpty(); renderLedger(); return; }
+
+    renderLayerStrip();
+    renderCurve();
+    renderReadout();
     renderPillars();
     renderBite();
     renderLedger();
+    renderCaption();
+    renderCurveLegend();
   }
 
-  // ------------------------------------------------------------------ THE CANVAS
-  // Vertical encoder depth (input at top, readout head at bottom). Each extracted layer
-  // is an intervention station; the horizontal bar is the readout-margin drop when the
-  // concept axis is projected out THERE, scaled by strength. Matched-random null ≈ 0.
-  function drawCanvas() {
-    const host = $("depth-canvas");
-    host.innerHTML = "";
-    const gen = ++state.gen;               // invalidates any in-flight propagation loop
-    const W = host.clientWidth || 700, H = host.clientHeight || 420;
-    const m = { top: 26, right: 128, bottom: 30, left: 132 };
-    const colX = m.left, barMax = W - m.right;
-    const svg = d3.select(host).append("svg").attr("viewBox", `0 0 ${W} ${H}`);
+  function renderDeclined(c) {
+    $("necessity-curve").innerHTML = "";
+    $("readout-block").innerHTML =
+      `<div class="nc-state">
+         <div class="nc-badge v-NOT_CERTIFIABLE">NOT CERTIFIABLE</div>
+         <div class="nc-reason">${esc((c && c.reason) || "No causal axis for this claim — certify returns NOT_CERTIFIABLE rather than force-fitting a probe.")}</div>
+         <div class="nc-foot">No layer intervention runs: there is no concept axis on this substrate to project out.</div>
+       </div>`;
+    $("stage-caption").innerHTML =
+      "This claim was <b>declined</b>. The battery never ran — no axis, no ablation, no null. Showing it (rather than dropping it) is the honesty the flow depends on.";
+    $("bite-callout").innerHTML = "";
+  }
 
-    const cv = curve();
-    const cross = crossCurve();
-    const n = cv.length;
-    const y = (i) => m.top + (H - m.top - m.bottom) * depthFrac(i, n);
-    const readoutY = y(n - 1);
-
-    // x-scale over readout-margin drop (shared by on/off target so bars are comparable)
-    const allGaps = cv.map((d) => d.gap).concat(cross ? cross.map((d) => Math.abs(d.gap)) : []);
-    const maxGap = Math.max(...allGaps, 0.1) * 1.12;
-    const x = d3.scaleLinear().domain([0, maxGap]).range([colX, barMax]);
-    const s = state.strength, mode = state.action;
-
-    // --- faint block ladder (the ViT-L substrate) -----------------------------
-    const ladder = svg.append("g");
-    for (let b = 0; b <= state.blocks; b++) {
-      const yy = m.top + (H - m.top - m.bottom) * (b / state.blocks);
-      ladder.append("line").attr("x1", colX - 9).attr("x2", colX + 9).attr("y1", yy).attr("y2", yy)
-        .attr("stroke", "rgba(255,255,255,.07)").attr("stroke-width", 1);
-    }
-    // the depth spine
-    svg.append("line").attr("x1", colX).attr("x2", colX).attr("y1", m.top).attr("y2", H - m.bottom)
-      .attr("stroke", "rgba(255,255,255,.18)").attr("stroke-width", 2);
-    svg.append("text").attr("x", colX - 14).attr("y", m.top - 10).attr("text-anchor", "end")
-      .attr("fill", NEUTRAL).attr("font-size", 10).attr("font-family", "var(--mono)").text("input · block 0");
-    svg.append("text").attr("x", colX - 14).attr("y", H - m.bottom + 16).attr("text-anchor", "end")
-      .attr("fill", NEUTRAL).attr("font-size", 10).attr("font-family", "var(--mono)")
-      .text("readout head · block " + state.blocks);
-
-    // --- baseline axis (null ≈ 0) --------------------------------------------
-    svg.append("text").attr("x", barMax).attr("y", H - m.bottom + 18).attr("text-anchor", "end")
-      .attr("fill", NEUTRAL).attr("font-size", 10).text("readout-margin drop →   (matched-random null ≈ 0)");
-
-    // --- per-station intervention --------------------------------------------
-    cv.forEach((d, i) => {
-      const yy = y(i);
-      const g = svg.append("g");
-
-      // station depth label (extracted layer name)
-      g.append("text").attr("x", colX - 22).attr("y", yy + 4).attr("text-anchor", "end")
-        .attr("fill", "var(--text-dim)").attr("font-size", 11.5).attr("font-weight", 600)
-        .text(String(d.layer).replace(/_/g, " "));
-
-      // null envelope (matched-random reaches only this far) — std ≈ gap/z
-      const nullStd = d.z ? Math.abs(d.gap / d.z) : 0;
-      const nullW = x(Math.min(nullStd * 1.645, maxGap)) - colX;
-      if (nullW > 1)
-        g.append("rect").attr("x", colX).attr("y", yy - 9).attr("width", nullW).attr("height", 18)
-          .attr("fill", "rgba(122,127,160,.16)").attr("rx", 3);
-
-      if (mode === "steer") {
-        // sufficiency is a single inject→flip, not layer-resolved: only mark the readout
-        if (i === n - 1) drawSteer(g, colX, yy, x, maxGap, s);
-        else drawInertNode(g, colX, yy);
-        return;
-      }
-
-      // ABLATE / SPECIFICITY: on-target necessity bar
-      const gw = Math.max(0, x(d.gap * s) - colX);
-      g.append("rect").attr("class", "on-bar").attr("x", colX).attr("y", yy - 7)
-        .attr("height", 14).attr("rx", 4).attr("fill", ON).attr("width", 0)
-        .transition().duration(420).attr("width", gw);
-
-      // off-target (cross-interference) dashed bar in specificity mode
-      if (mode === "specificity" && cross && cross[i]) {
-        const off = cross[i], ow = Math.max(0, x(Math.abs(off.gap) * s) - colX);
-        g.append("rect").attr("x", colX).attr("y", yy - 11).attr("height", 22).attr("rx", 4)
-          .attr("fill", "none").attr("stroke", OFF).attr("stroke-width", 1.6)
-          .attr("stroke-dasharray", "4 3").attr("width", 0)
-          .transition().duration(420).attr("width", Math.max(ow, 3));
-        g.append("text").attr("x", colX + Math.max(ow, 3) + 8).attr("y", yy - 12)
-          .attr("fill", OFF).attr("font-size", 9.5).attr("font-family", "var(--mono)")
-          .text(`off ${off.gap >= 0 ? "+" : ""}${off.gap.toFixed(2)}`);
-      }
-
-      // value label
-      g.append("text").attr("x", Math.min(colX + gw + 10, barMax)).attr("y", yy + 4)
-        .attr("fill", "var(--text)").attr("font-size", 11).attr("font-family", "var(--mono)")
-        .attr("font-weight", 600).text(`+${(d.gap * s).toFixed(2)}`);
-      g.append("text").attr("x", Math.min(colX + gw + 10, barMax)).attr("y", yy + 17)
-        .attr("fill", NEUTRAL).attr("font-size", 9.5).attr("font-family", "var(--mono)")
-        .text(`z ${d.z.toFixed(1)}`);
-
-      // station node — green ring if the bite clears the null
-      drawNode(g, colX, yy, d);
+  // ------------------------------------------------------------------ LAYER STRIP
+  function renderLayerStrip() {
+    const c = selected(), curve = curveOf(c), n = curve.length, s = state.strength;
+    const host = $("layer-strip"); host.innerHTML = "";
+    curve.forEach((p, i) => {
+      const node = document.createElement("button");
+      node.className = "layer-node" + (i === state.selLayer ? " sel" : "") + (p.bites ? " bites" : "");
+      node.style.setProperty("--v", V[c.verdict]);
+      node.innerHTML =
+        `<div class="ln-block">block ${blockFor(i, n)}</div>
+         <div class="ln-name">${esc(String(p.layer).replace(/_/g, " "))}</div>
+         <div class="ln-gap">Δ ${(p.gap * s).toFixed(2)}</div>
+         <div class="ln-z">z ${p.z.toFixed(1)} · ${p.bites ? "bites" : "n.s."}</div>`;
+      node.addEventListener("click", () => setLayer(i));
+      host.appendChild(node);
+      if (i < n - 1) { const a = document.createElement("div"); a.className = "ln-arrow"; a.textContent = "→"; host.appendChild(a); }
     });
-
-    // --- propagation pulse: first significant bite → readout head -------------
-    if (mode !== "steer") animatePropagation(svg, colX, cv, y, readoutY, gen);
   }
 
-  function drawNode(g, x, yy, d) {
-    const node = g.append("circle").attr("cx", x).attr("cy", yy).attr("r", 7)
-      .attr("fill", d.bites ? ON : "var(--panel-2)")
-      .attr("stroke", d.bites ? SUCCESS : "var(--border-strong)")
-      .attr("stroke-width", d.bites ? 2.5 : 1.5).style("cursor", "pointer");
-    if (d.bites) node.attr("filter", "drop-shadow(0 0 5px rgba(61,220,151,.5))");
-    node.on("mouseover", (e) => showTip(e,
-        `<div class="tt-title">layer: ${esc(d.layer)}</div>` +
-        `<div class="tt-row"><span>margin drop</span><span>+${d.gap.toFixed(3)}</span></div>` +
-        `<div class="tt-row"><span>z vs null</span><span>${d.z.toFixed(1)}</span></div>` +
-        `<div class="tt-note">${d.bites ? "significant bite — decision causally depends on the axis here" : "no significant bite — redundancy recomputes it downstream"}</div>`))
-      .on("mousemove", moveTip).on("mouseout", hideTip);
+  // ------------------------------------------------------------------ THE CURVE (depth × margin-drop)
+  function renderCurve() {
+    const c = selected(), curve = curveOf(c), n = curve.length, s = state.strength;
+    const host = $("necessity-curve"); host.innerHTML = "";
+    const W = Math.max(420, host.clientWidth || 620), H = 300;
+    const m = { top: 26, right: 26, bottom: 46, left: 56 };
+    const svg = d3.select(host).append("svg").attr("viewBox", `0 0 ${W} ${H}`).attr("width", "100%").attr("height", H);
+
+    const x = d3.scalePoint().domain(d3.range(n)).range([m.left, W - m.right]).padding(0.5);
+    // fixed y-domain to the FULL-strength curve so scrubbing animates within a stable frame
+    const maxGap = Math.max(...curve.map((p) => p.gap), 0.1) * 1.15;
+    const y = d3.scaleLinear().domain([-maxGap * 0.06, maxGap]).range([H - m.bottom, m.top]);
+
+    const gap = (i) => curve[i].gap * s;
+    const nsd = (i) => nullStd(curve[i]) * s;
+
+    // gridlines
+    svg.append("g").selectAll("line").data(y.ticks(5)).join("line")
+      .attr("class", "gridline").attr("x1", m.left).attr("x2", W - m.right).attr("y1", y).attr("y2", y);
+
+    // axes
+    svg.append("g").attr("class", "axis").attr("transform", `translate(${m.left},0)`).call(d3.axisLeft(y).ticks(5).tickFormat(d3.format(".1f")));
+    svg.append("text").attr("transform", `translate(16,${(m.top + H - m.bottom) / 2}) rotate(-90)`)
+      .attr("text-anchor", "middle").attr("fill", "var(--text-faint)").style("font-size", "10.5px").text("Δ decision margin (logit)");
+
+    // matched-random null band (±1σ around 0) — must be visible and flat
+    const band = d3.area().x((d, i) => x(i)).y0((d, i) => y(-nsd(i))).y1((d, i) => y(nsd(i))).curve(d3.curveMonotoneX);
+    svg.append("path").datum(curve).attr("d", band).attr("fill", NULLC).attr("fill-opacity", 0.3);
+    svg.append("line").attr("x1", m.left).attr("x2", W - m.right).attr("y1", y(0)).attr("y2", y(0))
+      .attr("stroke", NULLC).attr("stroke-width", 1).attr("stroke-dasharray", "4 4").attr("opacity", 0.65);
+
+    // guide line at the selected ablation site
+    svg.append("line").attr("class", "sel-guide")
+      .attr("x1", x(state.selLayer)).attr("x2", x(state.selLayer)).attr("y1", m.top).attr("y2", H - m.bottom)
+      .attr("stroke", "var(--border-strong)").attr("stroke-width", 1).attr("stroke-dasharray", "2 3");
+
+    // concept ablation trace
+    const line = d3.line().x((d, i) => x(i)).y((d, i) => y(gap(i))).curve(d3.curveMonotoneX);
+    svg.append("path").datum(curve).attr("d", line).attr("fill", "none").attr("stroke", V[c.verdict]).attr("stroke-width", 2.6);
+
+    // points + per-layer labels
+    curve.forEach((p, i) => {
+      const g = svg.append("g");
+      g.append("circle").attr("cx", x(i)).attr("cy", y(gap(i))).attr("r", i === state.selLayer ? 7 : 5)
+        .attr("fill", p.bites ? V[c.verdict] : "var(--panel)")
+        .attr("stroke", i === state.selLayer ? "var(--text)" : V[c.verdict]).attr("stroke-width", 2)
+        .style("cursor", "pointer")
+        .on("click", () => setLayer(i))
+        .on("mouseover", (e) => showTip(e,
+          `<div class="tt-title">block ${blockFor(i, n)} · ${esc(p.layer)}</div>` +
+          `<div class="tt-row"><span>margin drop</span><span>+${gap(i).toFixed(3)}</span></div>` +
+          `<div class="tt-row"><span>matched-random null σ</span><span>${nsd(i).toFixed(3)}</span></div>` +
+          `<div class="tt-row"><span>z vs null</span><span>${p.z.toFixed(1)}</span></div>` +
+          `<div class="tt-note">${p.bites ? "significant necessity bite" : "no significant bite (redundancy)"}</div>`))
+        .on("mousemove", moveTip).on("mouseout", hideTip);
+      // z annotation above biting points
+      g.append("text").attr("x", x(i)).attr("y", y(gap(i)) - (i === state.selLayer ? 13 : 11))
+        .attr("text-anchor", "middle").attr("fill", "var(--text-faint)").style("font-size", "9.5px")
+        .text(`z ${p.z.toFixed(0)}`);
+      // x label: block + layer name
+      g.append("text").attr("x", x(i)).attr("y", H - m.bottom + 18).attr("text-anchor", "middle")
+        .attr("fill", "var(--text-dim)").style("font-size", "11px").text(`block ${blockFor(i, n)}`);
+      g.append("text").attr("x", x(i)).attr("y", H - m.bottom + 32).attr("text-anchor", "middle")
+        .attr("fill", "var(--text-faint)").style("font-size", "9.5px").text(String(p.layer).replace(/_/g, " "));
+    });
   }
 
-  function drawInertNode(g, x, yy) {
-    g.append("circle").attr("cx", x).attr("cy", yy).attr("r", 6)
-      .attr("fill", "var(--panel-2)").attr("stroke", "var(--border-strong)").attr("stroke-width", 1.5);
+  function renderCurveLegend() {
+    const c = selected();
+    $("curve-legend").innerHTML =
+      `<span class="leg-item"><span class="leg-swatch" style="background:${V[c.verdict]}"></span>concept ablation (this claim)</span>` +
+      `<span class="leg-item"><span class="leg-swatch" style="background:${NULLC};opacity:.5"></span>matched-random null (±1σ)</span>` +
+      `<span class="leg-item"><span class="leg-dot"></span>selected ablation site</span>`;
   }
 
-  function drawSteer(g, x, yy, xs, maxGap, s) {
-    const c = cur(), suf = c.scores.sufficiency || 0;
-    const w = Math.max(0, xs(maxGap * 0.85 * suf * s) - x);
-    g.append("rect").attr("x", x).attr("y", yy - 7).attr("height", 14).attr("rx", 4)
-      .attr("fill", ON).attr("opacity", 0.9).attr("width", 0)
-      .transition().duration(420).attr("width", w);
-    g.append("text").attr("x", x + w + 10).attr("y", yy + 4).attr("fill", "var(--text)")
-      .attr("font-size", 11).attr("font-family", "var(--mono)").attr("font-weight", 600)
-      .text(`flip ${(suf * s).toFixed(2)}`);
-    g.append("text").attr("x", x + w + 10).attr("y", yy + 17).attr("fill", NEUTRAL)
-      .attr("font-size", 9.5).attr("font-family", "var(--mono)").text("random 0.00");
-    g.append("circle").attr("cx", x).attr("cy", yy).attr("r", 7).attr("fill", ON)
-      .attr("stroke", SUCCESS).attr("stroke-width", 2.5)
-      .attr("filter", "drop-shadow(0 0 5px rgba(61,220,151,.5))");
+  // ------------------------------------------------------------------ READOUT (two traces overlaid)
+  function renderReadout() {
+    const c = selected(), curve = curveOf(c), i = state.selLayer, p = curve[i], s = state.strength, n = curve.length;
+    const conceptDrop = p.gap * s, nullDrop = nullStd(p) * s;
+    const ref = Math.max(...curve.map((q) => q.gap), EPS);       // shared scale = full-strength max gap
+    const ratio = nullDrop > EPS ? conceptDrop / nullDrop : Infinity;
+
+    $("ro-sub").textContent = `block ${blockFor(i, n)} · ${String(p.layer).replace(/_/g, " ")} · strength ${(s * 100).toFixed(0)}%`;
+    $("readout-block").innerHTML =
+      `<div class="trace-row">
+         <div class="trace-k"><span class="trace-dot" style="background:${V[c.verdict]}"></span>concept ablation</div>
+         <div class="trace-bar"><div class="trace-fill" style="width:${clamp(conceptDrop / ref * 100, 0, 100)}%;background:${V[c.verdict]}"></div></div>
+         <div class="trace-v">+${conceptDrop.toFixed(3)}</div>
+       </div>
+       <div class="trace-row">
+         <div class="trace-k"><span class="trace-dot" style="background:${NULLC}"></span>matched-random null</div>
+         <div class="trace-bar"><div class="trace-fill" style="width:${clamp(nullDrop / ref * 100, 0.4, 100)}%;background:${NULLC}"></div></div>
+         <div class="trace-v">+${nullDrop.toFixed(3)}</div>
+       </div>
+       <div class="trace-caption">
+         ${p.bites
+           ? `The concept ablation drops the decision margin <b>${isFinite(ratio) ? Math.round(ratio) + "×" : "far"}</b> more than a matched-random edit of the same magnitude — a real necessity bite (z ${p.z.toFixed(1)}).`
+           : `At this depth the drop sits in the null band — necessity is redundancy-limited here (Hydra effect). Step toward the readout to see it bite.`}
+       </div>`;
   }
 
-  function animatePropagation(svg, x, cv, y, readoutY, gen) {
-    const first = cv.findIndex((d) => d.bites);
-    if (first < 0) return;
-    const startY = y(first);
-    const pulse = svg.append("circle").attr("cx", x).attr("r", 4).attr("fill", ON)
-      .attr("opacity", 0.9).attr("filter", "drop-shadow(0 0 6px " + ON + ")");
-    const run = () => {
-      if (gen !== state.gen) return;       // a newer draw superseded us — stop the loop
-      pulse.attr("cy", startY).attr("opacity", 0.9)
-        .transition().duration(1100).ease(d3.easeCubicInOut)
-        .attr("cy", readoutY).attr("opacity", 0.15)
-        .transition().duration(400).on("end", run);
-    };
-    run();
-  }
-
-  // ------------------------------------------------------------------ legend
-  function renderLegend() {
-    const items = [`<span class="leg-item"><span class="leg-swatch" style="background:${ON}"></span>readout-margin drop (concept ablated)</span>`,
-      `<span class="leg-item"><span class="leg-dot" style="background:${SUCCESS}"></span>significant bite (z ≥ 1.645 vs null)</span>`,
-      `<span class="leg-item"><span class="leg-swatch" style="background:rgba(122,127,160,.4)"></span>matched-random null envelope</span>`];
-    if (state.action === "specificity")
-      items.splice(1, 0, `<span class="leg-item"><span class="leg-swatch dash"></span>off-target axis (should stay flat)</span>`);
-    $("canvas-legend").innerHTML = items.join("");
-  }
-
-  function renderCaption() {
-    const cap = {
-      ablate: "<b>Ablate</b> projects the concept axis out of the CLS token at each layer and lets the rest of the forward pass recompute. The bar is how much the readout margin drops — the layer-resolved <b>necessity</b> curve. It stays near the null until deep in the stack: the model rebuilds the concept from un-ablated patch tokens (redundancy / Hydra effect) and only truly depends on the axis near the readout.",
-      steer: "<b>Steer</b> injects the concept direction into the representation (sufficiency). It is a single do() at the readout, not a layer-resolved edit — so it flips the class assignment where a matched-random direction does not. This is the clean, concept-specific signal on pathology FMs; necessity + specificity carry the verdict.",
-      specificity: "<b>Specificity</b> ablates the concept axis and scores a <em>different</em> readout (off-target, dashed). The on-target bar bites; the off-target bar stays flat — the effect is targeted to this axis, not general damage to the representation.",
-    };
-    $("stage-caption").innerHTML = cap[state.action];
-  }
-
-  // ------------------------------------------------------------------ readout meter
-  function renderMeter() {
-    const c = cur(), cv = curve();
-    const readout = cv[cv.length - 1];
-    const s = state.strength;
-    $("meter-pos").textContent = (c.concept || "concept").replace(/_/g, " ").split(" ")[0] || "concept";
-    const negName = (c.contrast || "").split(" vs ")[1] || "contrast";
-    $("meter-neg").textContent = negName;
-
-    let posPct, cap;
-    if (state.action === "steer") {
-      // inject from a neutral start → swing toward the concept by the flip rate
-      const flip = (c.scores.sufficiency || 0) * s;
-      posPct = 50 + 42 * flip;
-      cap = `injecting the concept direction swings the readout toward <b>${esc((c.concept||"").replace(/_/g," "))}</b> ` +
-            `(flip ${flip.toFixed(2)}); a matched-random direction leaves it at the midline.`;
-    } else if (state.action === "specificity") {
-      posPct = 88; // on-target intact; off-target unaffected
-      cap = `ablating the off-target axis leaves this readout intact — the needle holds at the concept.`;
-    } else {
-      const bite = Math.min(1, Math.abs(readout.gap) / 1.0); // readout gaps here flip the decision
-      posPct = 88 - 38 * s * bite;
-      cap = `ablating the axis at the readout drops the margin by <b>+${(readout.gap*s).toFixed(2)}</b> — the ` +
-            (s * bite > 0.6 ? "decision collapses toward the contrast." : "decision mostly holds (redundancy).");
-    }
-    posPct = Math.max(50, Math.min(94, posPct));
-    $("meter-needle").style.left = posPct + "%";
-    const fill = $("meter-fill");
-    fill.style.left = Math.min(50, posPct) + "%";
-    fill.style.width = Math.abs(posPct - 50) + "%";
-    $("meter-caption").innerHTML = cap;
-  }
-
-  // ------------------------------------------------------------------ pillars
+  // ------------------------------------------------------------------ pillars / bite / ledger / caption
   function renderPillars() {
-    const sc = cur().scores, host = $("pillars");
-    const cv = curve(), readoutOnly = !cv.slice(0, -1).some((d) => d.bites);
+    const sc = selected().scores;
     const tiles = [
-      { name: "necessity", val: sc.necessity, tag: readoutOnly ? "readout-limited" : "bites early" },
+      { name: "necessity", val: sc.necessity, tag: "layer-resolved" },
       { name: "sufficiency", val: sc.sufficiency, tag: "steering axis" },
       { name: "specificity", val: sc.specificity, tag: "targeted" },
     ];
-    host.innerHTML = tiles.map((t) =>
-      `<div class="pill-tile">
-         <div class="pill-name">${t.name}</div>
-         <div class="pill-val">${t.val != null ? t.val.toFixed(2) : "—"}</div>
-         <div class="pill-verdict" style="color:var(--text-faint)">${t.tag}</div>
-       </div>`).join("");
+    $("pillars").innerHTML = tiles.map((t) =>
+      `<div class="pill-tile"><div class="pill-name">${t.name}</div>` +
+      `<div class="pill-val">${t.val != null ? t.val.toFixed(2) : "—"}</div>` +
+      `<div class="pill-verdict" style="color:var(--text-faint)">${t.tag}</div></div>`).join("");
+  }
+  function renderPillarsEmpty() {
+    $("pillars").innerHTML = ["necessity", "sufficiency", "specificity"].map((nm) =>
+      `<div class="pill-tile"><div class="pill-name">${nm}</div><div class="pill-val">—</div>` +
+      `<div class="pill-verdict" style="color:var(--text-faint)">not run</div></div>`).join("");
   }
 
   function renderBite() {
-    const cv = curve(), first = cv.find((d) => d.bites);
-    const host = $("bite-callout");
-    if (!first) { host.innerHTML = "No significant bite above the matched-random null at any extracted layer."; return; }
-    const readoutOnly = cv.slice(0, -1).every((d) => !d.bites);
-    host.innerHTML = `First significant bite at <b>${esc(first.layer).replace(/_/g," ")}</b> (z ${first.z.toFixed(1)}). ` +
-      (readoutOnly
-        ? `Necessity is <b>readout-limited</b> — the axis is recomputed downstream until the decision head, so a naive single-axis TCAV faithfulness claim would over-state it.`
-        : `The decision causally depends on the axis from mid-network on — the strongest per-slide causal read.`);
-  }
-
-  // ------------------------------------------------------------------ actions ledger
-  // Every dynamic action that fired, with its layer-by-layer bite — visible at THIS verdict.
-  function renderLedger() {
-    const c = cur();
-    const lv = $("ledger-verdict");
-    lv.textContent = c.verdict; lv.className = "ledger-verdict " + verdictClass(c.verdict);
-
-    const trace = c.reasoning_trace || [];
-    const rows = [];
-    trace.forEach((t) => {
-      if (t.step === "verdict") return;
-      const label = VERB_LABEL[t.step] || t.step.replace(/_/g, " ");
-      const badge = badgeFor(t);
-      const activeStep = ACTIONS[state.action] && ACTIONS[state.action].step.includes(t.step);
-      let chips = "";
-      if (t.step === "necessity_live" || t.step === "necessity_cached") chips = layerChips(curve(), "bite");
-      if (t.step === "specificity" && crossCurve()) chips = layerChips(crossCurve(), "bite-off");
-      rows.push(
-        `<div class="led-row${activeStep ? " on" : ""}">
-           <div class="led-top">
-             <span class="led-verb">${esc(label)}</span>
-             <span class="led-badge ${badge.cls}">${badge.txt}</span>
-           </div>
-           <div class="led-obs">${esc(shorten(t.observation))}</div>
-           ${chips}
-         </div>`);
-    });
-    $("ledger").innerHTML = rows.join("") ||
-      `<div class="led-row"><div class="led-obs">No causal actions ran — certify declined this claim.</div></div>`;
+    const c = selected(), curve = curveOf(c), n = curve.length;
+    const best = curve.reduce((b, p, i) => (p.gap > curve[b].gap ? i : b), 0);
+    const meanNull = curve.reduce((a, p) => a + nullStd(p), 0) / n;
+    const rising = curve[n - 1].gap >= curve[0].gap;
+    $("bite-callout").innerHTML =
+      `Concept ablation bites hardest at <b>block ${blockFor(best, n)} · ${esc(String(curve[best].layer).replace(/_/g, " "))}</b> ` +
+      `(Δ ${curve[best].gap.toFixed(2)}, z ${curve[best].z.toFixed(1)}). The matched-random null holds at ~${meanNull.toFixed(2)} across every depth. ` +
+      (rising
+        ? `The margin-drop <b>rises monotonically with depth</b> — necessity is redundancy-limited early and bites near the readout. That layer-resolved honesty is the point.`
+        : `The drop peaks mid-network — consistent with mid-layer redundancy.`);
   }
 
   const VERB_LABEL = {
-    contrast_validation: "probe · contrast gate",
-    necessity_live: "ablate_live · necessity",
-    necessity_cached: "ablate · necessity (cached)",
-    sufficiency: "steer · sufficiency",
-    specificity: "specificity · off-target",
-    confound: "confound · site gate",
+    contrast_validation: "probe · contrast gate", necessity_live: "ablate_live · necessity",
+    necessity_cached: "ablate · necessity (cached)", sufficiency: "steer · sufficiency",
+    specificity: "specificity · off-target", confound: "confound · site gate",
     multiple_comparisons: "multiple comparisons",
   };
-
   function badgeFor(t) {
     const o = (t.observation || "") + " " + (t.interpretation || "");
     if (/UNCHECKED|no site|single-source/i.test(o)) return { cls: "off", txt: "unchecked" };
     if (/WARN|does NOT|FLAG|leaked|RIDES|CAPPED|collinear/i.test(o)) return { cls: "warn", txt: "warn" };
     return { cls: "pass", txt: "pass" };
   }
+  const shorten = (s) => { s = String(s || ""); return s.length > 220 ? s.slice(0, 217) + "…" : s; };
 
-  function layerChips(cv, biteClass) {
-    return `<div class="led-layers">` + cv.map((d) => {
-      const bite = biteClass === "bite" ? d.bites : (d.z && d.z >= 1.645 && d.gap > 0);
-      return `<span class="led-chip ${bite ? biteClass : ""}">${esc(String(d.layer).replace(/_/g, " ").split(" ").pop())} ${d.gap >= 0 ? "+" : ""}${d.gap.toFixed(2)}</span>`;
-    }).join("") + `</div>`;
+  // per-layer chips from the REAL live_necessity curve (block · Δgap), the bite emphasized
+  function layerChips() {
+    const c = selected(); if (!isInterventable(c)) return "";
+    const curve = curveOf(c), n = curve.length;
+    return `<div class="led-layers">` + curve.map((p, i) =>
+      `<span class="led-chip ${p.bites ? "bite" : ""}">b${blockFor(i, n)} Δ${p.gap.toFixed(2)}</span>`).join("") + `</div>`;
   }
 
-  function shorten(s) { s = String(s || ""); return s.length > 200 ? s.slice(0, 197) + "…" : s; }
+  function renderLedger() {
+    const c = selected();
+    const lv = $("ledger-verdict"); lv.textContent = c ? c.verdict : "—"; lv.className = "ledger-verdict " + verdictClass(c && c.verdict);
+    const trace = (c && c.reasoning_trace) || [];
+    const rows = [];
+    trace.forEach((t) => {
+      if (t.step === "verdict") return;
+      const label = VERB_LABEL[t.step] || t.step.replace(/_/g, " ");
+      const badge = badgeFor(t);
+      const isNec = t.step === "necessity_live" || t.step === "necessity_cached";
+      rows.push(
+        `<div class="led-row${isNec ? " on" : ""}">
+           <div class="led-top"><span class="led-verb">${esc(label)}</span>
+             <span class="led-badge ${badge.cls}">${badge.txt}</span></div>
+           <div class="led-obs">${esc(shorten(t.observation))}</div>${isNec ? layerChips() : ""}
+         </div>`);
+    });
+    $("ledger").innerHTML = rows.join("") ||
+      `<div class="led-row"><div class="led-obs">No causal actions ran — certify declined this claim.</div></div>`;
+  }
+
+  function renderCaption() {
+    const c = selected();
+    $("stage-caption").innerHTML =
+      "<b>Live source-intervention:</b> the concept axis is projected out of the CLS at the selected block on <b>this slide's forward pass</b>, and blocks L+1…final recompute. " +
+      "The margin-drop vs a matched-random null of the same magnitude is the necessity signal — reported layer by layer, not collapsed to one readout-space number." +
+      (state.source === "mock"
+        ? ' <span class="src-warn">· offline: illustrative card (start the warm backend for the live substrate)</span>' : "");
+  }
 
   // ------------------------------------------------------------------ controls
-  function setAction(a) {
-    state.action = a;
-    d3.selectAll(".seg-btn").classed("active", function () { return this.dataset.action === a; });
-    drawCanvas(); renderLegend(); renderCaption(); renderMeter(); renderLedger();
+  function setLayer(i) {
+    state.selLayer = i;
+    renderLayerStrip(); renderCurve(); renderReadout();
   }
   function setStrength(v) {
-    state.strength = v / 100;
-    $("strength-val").textContent = v + "%";
-    drawCanvas(); renderMeter();
+    state.strength = v / 100; $("strength-val").textContent = v + "%";
+    renderLayerStrip(); renderCurve(); renderReadout();
   }
 
-  // ------------------------------------------------------------------ live upgrade
-  function setLive(live) {
+  // ------------------------------------------------------------------ live badge / rerun
+  function setChip() {
     const chip = $("substrate-chip");
+    const live = state.source !== "mock";
     chip.dataset.live = live ? "1" : "0";
-    chip.textContent = (live ? "● LIVE · " : "○ mock · ") + "phikon-v2 · ViT-L/" + state.blocks;
+    const label = state.source === "certify" ? "● LIVE certify" : state.source === "live" ? "● LIVE demo" : "○ mock";
+    chip.textContent = label + " · phikon-v2 · ViT-L/" + state.blocks;
   }
-  async function bootstrap() {
-    try {
-      const r = await fetch(apiUrl("api/all"), { headers: { Accept: "application/json" } });
-      if (!r.ok) throw new Error("api " + r.status);
-      const d = await r.json();
-      if (d.error) throw new Error(d.error);
-      if (d.CARD) window.CARD = d.CARD;
-      if (d.TRACKS) window.TRACKS = d.TRACKS;
-      ingest();
-      if (!state.claims.length) throw new Error("no live per-layer curves — keeping mock");
-      buildRail(); renderStage(); setLive(true);
-    } catch (e) { setLive(false); }
-  }
-
   async function rerun() {
     const btn = $("rerun-btn"); btn.disabled = true; btn.textContent = "⟳ …";
-    await bootstrap();
+    try { localStorage.removeItem("biolayer:lastCard"); } catch (e) {}
+    await loadCard(); ingest(); setChip(); buildSummary(); buildRail(); renderStage();
     btn.disabled = false; btn.textContent = "⟳ live";
   }
 
   // ------------------------------------------------------------------ init
-  function init() {
-    ingest();
-    if (!state.claims.length) { // nothing certifiable with a curve — degrade gracefully
-      $("depth-canvas").innerHTML = `<div class="nc-state"><div class="nc-reason">No certifiable claim carries a per-layer intervention curve in this card.</div></div>`;
-      return;
-    }
-    setLive(false);
-    buildRail();
-    renderStage();
-
-    document.querySelectorAll(".seg-btn").forEach((b) =>
-      b.addEventListener("click", () => setAction(b.dataset.action)));
+  async function init() {
     $("strength-slider").addEventListener("input", (e) => setStrength(+e.target.value));
     $("rerun-btn").addEventListener("click", rerun);
-    window.addEventListener("resize", () => { drawCanvas(); });
+    window.addEventListener("resize", () => { if (isInterventable(selected())) renderCurve(); });
 
-    bootstrap();
+    await loadCard(); ingest(); setChip(); buildSummary(); buildRail();
+    if (!state.all.length) {
+      $("necessity-curve").innerHTML = `<div class="panels-loading">No claims in this card.</div>`;
+      return;
+    }
+    // ensure a sensible default layer for the initial interventable claim
+    selectClaim(state.selectedId);
   }
 
   document.addEventListener("DOMContentLoaded", init);

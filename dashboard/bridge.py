@@ -42,6 +42,8 @@ def adapt_card(card):
             "claim": c.get("claim"),
             "concept": c.get("concept"),
             "contrast": (f'{cv.get("pos")} vs {cv.get("neg")}' if cv.get("pos") else None),
+            # keep the raw axis codes so the Studio can query the live layer field per claim
+            "pos": cv.get("pos"), "neg": cv.get("neg"),
             "polarity": c.get("polarity"),
             "verdict": c.get("verdict"),
             "scores": c.get("scores", {}),

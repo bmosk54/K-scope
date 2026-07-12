@@ -29,6 +29,7 @@ from flask import Flask, request, jsonify, send_from_directory
 # warm imports — pay the torch/biolayer cost ONCE, here, not per request
 import bridge  # dashboard/bridge.py (adapters + build_*)
 from biolayer.mcp import verbs
+from biolayer import tracks as _tracks
 from biolayer.dynamic import bedrock as _bedrock
 
 PUBLIC = os.path.join(HERE, "public")
@@ -67,6 +68,23 @@ def _certify_answer(a):
         track=a.get("track", "phikon"), use_bedrock=bool(a.get("bedrock", False)))}
 
 
+def _model_key(a):
+    """Resolve the substrate model key from the track name (default phikon)."""
+    return _tracks.get(a.get("track", "phikon")).model_key
+
+
+# layered / axis_field take an EXPLICIT concept axis (pos/neg) per claim. Pass track=None +
+# model so verbs._resolve keeps the requested axis instead of the track's default objective.
+def _layered(a):
+    return verbs.layered(model=_model_key(a), pos=a.get("pos", "TUM"),
+                         neg=a.get("neg", "LYM"), space=a.get("space", "global"), track=None)
+
+
+def _axis_field(a):
+    return verbs.axis_field(model=_model_key(a), pos=a.get("pos", "TUM"),
+                            neg=a.get("neg", "LYM"), space=a.get("space", "global"), track=None)
+
+
 VERBS = {
     "certify_answer": _certify_answer,
     "certify":       lambda a: verbs.certify(track=a.get("track", "phikon"), n_null=a.get("n_null", 100)),
@@ -78,7 +96,8 @@ VERBS = {
     "specificity":   lambda a: verbs.specificity(track=a.get("track", "phikon")),
     "rehypothesize": lambda a: verbs.rehypothesize(track=a.get("track", "phikon")),
     "confound":      lambda a: verbs.confound_verb(track=a.get("track", "phikon")),
-    "layered":       lambda a: verbs.layered(track=a.get("track", "phikon")),
+    "layered":       _layered,
+    "axis_field":    _axis_field,
     "probe":         lambda a: verbs.probe(track=a.get("track", "phikon")),
 }
 
