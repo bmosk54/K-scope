@@ -1008,6 +1008,7 @@
 
   function goToView(id) {
     document.body.dataset.view = id;                 // drives Prompt-view / card-view CSS
+    try { localStorage.setItem("kscope:view", id); } catch (e) {}   // stay on this tab across reloads
     d3.selectAll(".view").classed("active", false);
     d3.select("#view-" + id).classed("active", true);
     d3.selectAll(".nav-item").classed("active", false);
@@ -1313,7 +1314,10 @@
     const _runBtn = document.getElementById("btn-run");
     if (_runBtn) _runBtn.addEventListener("click", runCertify);
 
-    goToView("prompt");   // land on the Prompt section
+    // restore the last-viewed tab across reloads (fall back to Prompt if none / unknown)
+    let savedView = null;
+    try { savedView = localStorage.getItem("kscope:view"); } catch (e) {}
+    goToView(savedView && document.getElementById("view-" + savedView) ? savedView : "prompt");
 
     // re-fit the gallery iframe whenever it (re)loads — initial load, or an in-gallery
     // source/axis switch that navigates it to a sibling gallery file.

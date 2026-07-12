@@ -399,13 +399,15 @@ _TEMPLATE = r"""<!DOCTYPE html>
           <!-- bold arrow that points at the tiny 14×14 box (shown only in patch mode) -->
           <svg class="unit-arrow" id="unit-arrow" viewBox="0 0 100 100" aria-hidden="true">
             <defs>
-              <marker id="ua-head" markerUnits="userSpaceOnUse" markerWidth="4.6" markerHeight="4.6"
-                      refX="3.2" refY="2" orient="auto">
-                <path d="M0,0 L4,2 L0,4 Z" fill="#ff1f2e"></path>
+              <!-- refX = the tip's x so the arrowhead POINT sits exactly on the line's end;
+                   butt cap (no round) so the stroke can't poke past the tip -->
+              <marker id="ua-head" markerUnits="userSpaceOnUse" markerWidth="5" markerHeight="5"
+                      refX="4.4" refY="2.2" orient="auto">
+                <path d="M0,0 L4.4,2.2 L0,4.4 Z" fill="#ff1f2e"></path>
               </marker>
             </defs>
             <line x1="68" y1="27" x2="53" y2="46.2" stroke="#ff1f2e" stroke-width="1.3"
-                  stroke-linecap="round" marker-end="url(#ua-head)"></line>
+                  marker-end="url(#ua-head)"></line>
           </svg>
         </div>
       </div>
