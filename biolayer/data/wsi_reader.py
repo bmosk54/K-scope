@@ -17,6 +17,8 @@ Container deps (add to the tiling/embed job): `openslide-python` + `openslide-bi
 import numpy as np
 from PIL import Image
 
+Image.MAX_IMAGE_PIXELS = None   # WSIs are legitimately gigapixel; disable the bomb guard
+
 
 class WSIReader:
     """Uniform interface (mirrors the OpenSlide API the tiler expects)."""
@@ -54,6 +56,14 @@ class WSIReader:
 
     def mpp_at(self, level: int):
         return None if self.mpp is None else self.mpp * self.level_downsamples[level]
+
+    def thumbnail(self, max_dim: int = 4096):
+        """Bounded RGB thumbnail (H,W,3 uint8) + its downsample vs level 0.
+
+        Robust to slides whose SMALLEST pyramid level is still gigapixel — never
+        materializes a full-res plane (which trips Pillow's decompression-bomb guard).
+        """
+        raise NotImplementedError
 
     def __enter__(self):
         return self
@@ -97,6 +107,12 @@ class _OpenSlideWSI(WSIReader):
 
     def read_region(self, location, level, size):
         return self._os.read_region(location, level, size).convert("RGB")
+
+    def thumbnail(self, max_dim: int = 4096):
+        # OpenSlide generates a bounded thumbnail efficiently (never a full-res plane).
+        thumb = self._os.get_thumbnail((max_dim, max_dim)).convert("RGB")
+        ds = self.dimensions[0] / thumb.size[0]
+        return np.asarray(thumb), ds
 
     def close(self):
         self._os.close()
@@ -155,6 +171,16 @@ class _TiffWSI(WSIReader):
         if arr.ndim == 2:
             arr = np.stack([arr] * 3, axis=-1)
         return Image.fromarray(arr[..., :3].astype("uint8"), "RGB")
+
+    def thumbnail(self, max_dim: int = 4096):
+        # Stride-subsample the smallest level (zarr reads only the strided chunks).
+        lvl = self._levels[-1]
+        step = max(1, max(lvl.shape[0], lvl.shape[1]) // max_dim)
+        arr = np.asarray(lvl[::step, ::step])
+        if arr.ndim == 2:
+            arr = np.stack([arr] * 3, axis=-1)
+        ds = self.dimensions[0] / arr.shape[1]
+        return arr[..., :3].astype("uint8"), ds
 
     def close(self):
         self._tif.close()

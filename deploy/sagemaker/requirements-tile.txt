@@ -1,3 +1,7 @@
+# numpy<2: the PyTorch DLC's torch is built against numpy 1.x; letting zarr/tifffile
+# pull numpy 2.x breaks torch.from_numpy ("Numpy is not available").
+numpy<2
+boto3>=1.40          # DLC's boto3 predates s3vectors ("Unknown service: 's3vectors'")
 timm>=1.0.0
 huggingface_hub>=0.24
 openslide-python
