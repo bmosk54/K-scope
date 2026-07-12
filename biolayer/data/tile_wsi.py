@@ -72,15 +72,17 @@ def eval_filters(rgb: np.ndarray, names):
 # ---------------------------------------------------------------------------
 # Tissue mask (coarse) — prunes the grid before reading full-res tiles
 # ---------------------------------------------------------------------------
-def tissue_mask(reader, sat_thresh: float = 0.05):
-    """Binary tissue mask from the smallest pyramid level + its level-0 downsample."""
-    level = reader.level_count - 1
-    w, h = reader.level_dimensions[level]
-    thumb = np.asarray(reader.read_region((0, 0), level, (w, h)))
+def tissue_mask(reader, sat_thresh: float = 0.05, max_dim: int = 4096):
+    """Binary tissue mask from a BOUNDED thumbnail + its level-0 downsample.
+
+    Uses reader.thumbnail() (never a full-res plane) so slides whose smallest pyramid
+    level is still gigapixel don't trip Pillow's decompression-bomb guard.
+    """
+    thumb, ds = reader.thumbnail(max_dim)
     mx = thumb.max(-1).astype("float32")
     mn = thumb.min(-1).astype("float32")
     sat = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1e-6), 0.0)
-    return sat > sat_thresh, reader.level_downsamples[level]
+    return sat > sat_thresh, ds
 
 
 # ---------------------------------------------------------------------------
