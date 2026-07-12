@@ -175,22 +175,21 @@
       : "";
 
     // toggle the ablation UI vs a declined empty-state
-    ["layerstrip-wrap", "control-bar", "curve-wrap"].forEach((idn) => { $(idn).style.display = inter ? "" : "none"; });
+    ["deck-wrap", "control-bar"].forEach((idn) => { $(idn).style.display = inter ? "" : "none"; });
 
     if (!inter) { renderDeclined(c); renderPillarsEmpty(); renderLedger(); return; }
 
-    renderLayerStrip();
-    renderCurve();
+    renderDeck();
     renderReadout();
     renderPillars();
     renderBite();
     renderLedger();
     renderCaption();
-    renderCurveLegend();
+    renderDeckLegend();
   }
 
   function renderDeclined(c) {
-    $("necessity-curve").innerHTML = "";
+    $("deck3d").innerHTML = "";
     $("readout-block").innerHTML =
       `<div class="nc-state">
          <div class="nc-badge v-NOT_CERTIFIABLE">NOT CERTIFIABLE</div>
@@ -202,98 +201,58 @@
     $("bite-callout").innerHTML = "";
   }
 
-  // ------------------------------------------------------------------ LAYER STRIP
-  function renderLayerStrip() {
+  // ------------------------------------------------------------------ THE 3D LAYER STACK
+  // The encoder's depth as a stack of glass sheets in perspective (Goodfire-style). One
+  // sheet per probed block: input at the back, readout at the front. Each sheet shows, in
+  // plane, the concept-ablation margin-drop bar vs the flat matched-random null — so the
+  // monotone rise reads as the bars growing toward the front. Click a sheet to ablate there.
+  function renderDeck() {
     const c = selected(), curve = curveOf(c), n = curve.length, s = state.strength;
-    const host = $("layer-strip"); host.innerHTML = "";
+    const host = $("deck3d"); host.innerHTML = "";
+    const maxGap = Math.max(...curve.map((p) => p.gap), EPS);
+    const deck = document.createElement("div"); deck.className = "deck";
+
     curve.forEach((p, i) => {
-      const node = document.createElement("button");
-      node.className = "layer-node" + (i === state.selLayer ? " sel" : "") + (p.bites ? " bites" : "");
-      node.style.setProperty("--v", V[c.verdict]);
-      node.innerHTML =
-        `<div class="ln-block">block ${blockFor(i, n)}</div>
-         <div class="ln-name">${esc(String(p.layer).replace(/_/g, " "))}</div>
-         <div class="ln-gap">Δ ${(p.gap * s).toFixed(2)}</div>
-         <div class="ln-z">z ${p.z.toFixed(1)} · ${p.bites ? "bites" : "n.s."}</div>`;
-      node.addEventListener("click", () => setLayer(i));
-      host.appendChild(node);
-      if (i < n - 1) { const a = document.createElement("div"); a.className = "ln-arrow"; a.textContent = "→"; host.appendChild(a); }
+      const gap = p.gap * s, nsd = nullStd(p) * s;
+      const gpct = clamp(gap / maxGap * 100, 0, 100), npct = clamp(nsd / maxGap * 100, 0.5, 100);
+      const plane = document.createElement("div");
+      plane.className = "plane" + (i === state.selLayer ? " sel" : "") + (p.bites ? " bites" : "");
+      plane.style.setProperty("--z", (i * 46) + "px");   // deeper block = further forward
+      plane.style.setProperty("--v", V[c.verdict]);
+      plane.style.setProperty("--glow", (p.bites ? 0.12 + 0.5 * (gap / maxGap) : 0.05).toFixed(3));
+      plane.innerHTML =
+        `<div class="sheet">
+           <div class="sheet-head">
+             <span class="sh-block">block ${blockFor(i, n)}</span>
+             <span class="sh-name">${esc(String(p.layer).replace(/_/g, " "))}</span>
+             <span class="sh-flag ${p.bites ? "on" : ""}">${p.bites ? "bites" : "n.s."}</span>
+           </div>
+           <div class="sheet-bars">
+             <div class="sbar-null" style="width:${npct}%"></div>
+             <div class="sbar-gap" style="width:${gpct}%"></div>
+           </div>
+           <div class="sheet-foot"><span>Δ ${gap.toFixed(2)}</span><span>z ${p.z.toFixed(1)}</span></div>
+         </div>`;
+      plane.addEventListener("click", () => setLayer(i));
+      plane.addEventListener("mouseover", (e) => showTip(e,
+        `<div class="tt-title">block ${blockFor(i, n)} · ${esc(p.layer)}</div>` +
+        `<div class="tt-row"><span>margin drop</span><span>+${gap.toFixed(3)}</span></div>` +
+        `<div class="tt-row"><span>matched-random null σ</span><span>${nsd.toFixed(3)}</span></div>` +
+        `<div class="tt-row"><span>z vs null</span><span>${p.z.toFixed(1)}</span></div>` +
+        `<div class="tt-note">${p.bites ? "significant necessity bite — ablate here to collapse the readout" : "no significant bite — redundancy recomputes it downstream"}</div>`));
+      plane.addEventListener("mousemove", moveTip);
+      plane.addEventListener("mouseout", hideTip);
+      deck.appendChild(plane);
     });
+    host.appendChild(deck);
   }
 
-  // ------------------------------------------------------------------ THE CURVE (depth × margin-drop)
-  function renderCurve() {
-    const c = selected(), curve = curveOf(c), n = curve.length, s = state.strength;
-    const host = $("necessity-curve"); host.innerHTML = "";
-    const W = Math.max(420, host.clientWidth || 620), H = 300;
-    const m = { top: 26, right: 26, bottom: 46, left: 56 };
-    const svg = d3.select(host).append("svg").attr("viewBox", `0 0 ${W} ${H}`).attr("width", "100%").attr("height", H);
-
-    const x = d3.scalePoint().domain(d3.range(n)).range([m.left, W - m.right]).padding(0.5);
-    // fixed y-domain to the FULL-strength curve so scrubbing animates within a stable frame
-    const maxGap = Math.max(...curve.map((p) => p.gap), 0.1) * 1.15;
-    const y = d3.scaleLinear().domain([-maxGap * 0.06, maxGap]).range([H - m.bottom, m.top]);
-
-    const gap = (i) => curve[i].gap * s;
-    const nsd = (i) => nullStd(curve[i]) * s;
-
-    // gridlines
-    svg.append("g").selectAll("line").data(y.ticks(5)).join("line")
-      .attr("class", "gridline").attr("x1", m.left).attr("x2", W - m.right).attr("y1", y).attr("y2", y);
-
-    // axes
-    svg.append("g").attr("class", "axis").attr("transform", `translate(${m.left},0)`).call(d3.axisLeft(y).ticks(5).tickFormat(d3.format(".1f")));
-    svg.append("text").attr("transform", `translate(16,${(m.top + H - m.bottom) / 2}) rotate(-90)`)
-      .attr("text-anchor", "middle").attr("fill", "var(--text-faint)").style("font-size", "10.5px").text("Δ decision margin (logit)");
-
-    // matched-random null band (±1σ around 0) — must be visible and flat
-    const band = d3.area().x((d, i) => x(i)).y0((d, i) => y(-nsd(i))).y1((d, i) => y(nsd(i))).curve(d3.curveMonotoneX);
-    svg.append("path").datum(curve).attr("d", band).attr("fill", NULLC).attr("fill-opacity", 0.3);
-    svg.append("line").attr("x1", m.left).attr("x2", W - m.right).attr("y1", y(0)).attr("y2", y(0))
-      .attr("stroke", NULLC).attr("stroke-width", 1).attr("stroke-dasharray", "4 4").attr("opacity", 0.65);
-
-    // guide line at the selected ablation site
-    svg.append("line").attr("class", "sel-guide")
-      .attr("x1", x(state.selLayer)).attr("x2", x(state.selLayer)).attr("y1", m.top).attr("y2", H - m.bottom)
-      .attr("stroke", "var(--border-strong)").attr("stroke-width", 1).attr("stroke-dasharray", "2 3");
-
-    // concept ablation trace
-    const line = d3.line().x((d, i) => x(i)).y((d, i) => y(gap(i))).curve(d3.curveMonotoneX);
-    svg.append("path").datum(curve).attr("d", line).attr("fill", "none").attr("stroke", V[c.verdict]).attr("stroke-width", 2.6);
-
-    // points + per-layer labels
-    curve.forEach((p, i) => {
-      const g = svg.append("g");
-      g.append("circle").attr("cx", x(i)).attr("cy", y(gap(i))).attr("r", i === state.selLayer ? 7 : 5)
-        .attr("fill", p.bites ? V[c.verdict] : "var(--panel)")
-        .attr("stroke", i === state.selLayer ? "var(--text)" : V[c.verdict]).attr("stroke-width", 2)
-        .style("cursor", "pointer")
-        .on("click", () => setLayer(i))
-        .on("mouseover", (e) => showTip(e,
-          `<div class="tt-title">block ${blockFor(i, n)} · ${esc(p.layer)}</div>` +
-          `<div class="tt-row"><span>margin drop</span><span>+${gap(i).toFixed(3)}</span></div>` +
-          `<div class="tt-row"><span>matched-random null σ</span><span>${nsd(i).toFixed(3)}</span></div>` +
-          `<div class="tt-row"><span>z vs null</span><span>${p.z.toFixed(1)}</span></div>` +
-          `<div class="tt-note">${p.bites ? "significant necessity bite" : "no significant bite (redundancy)"}</div>`))
-        .on("mousemove", moveTip).on("mouseout", hideTip);
-      // z annotation above biting points
-      g.append("text").attr("x", x(i)).attr("y", y(gap(i)) - (i === state.selLayer ? 13 : 11))
-        .attr("text-anchor", "middle").attr("fill", "var(--text-faint)").style("font-size", "9.5px")
-        .text(`z ${p.z.toFixed(0)}`);
-      // x label: block + layer name
-      g.append("text").attr("x", x(i)).attr("y", H - m.bottom + 18).attr("text-anchor", "middle")
-        .attr("fill", "var(--text-dim)").style("font-size", "11px").text(`block ${blockFor(i, n)}`);
-      g.append("text").attr("x", x(i)).attr("y", H - m.bottom + 32).attr("text-anchor", "middle")
-        .attr("fill", "var(--text-faint)").style("font-size", "9.5px").text(String(p.layer).replace(/_/g, " "));
-    });
-  }
-
-  function renderCurveLegend() {
+  function renderDeckLegend() {
     const c = selected();
     $("curve-legend").innerHTML =
-      `<span class="leg-item"><span class="leg-swatch" style="background:${V[c.verdict]}"></span>concept ablation (this claim)</span>` +
-      `<span class="leg-item"><span class="leg-swatch" style="background:${NULLC};opacity:.5"></span>matched-random null (±1σ)</span>` +
-      `<span class="leg-item"><span class="leg-dot"></span>selected ablation site</span>`;
+      `<span class="leg-item"><span class="leg-swatch" style="background:${V[c.verdict]}"></span>concept-ablation margin drop</span>` +
+      `<span class="leg-item"><span class="leg-swatch" style="background:${NULLC};opacity:.5"></span>matched-random null</span>` +
+      `<span class="leg-item"><span class="leg-dot"></span>selected ablation site (front → readout)</span>`;
   }
 
   // ------------------------------------------------------------------ READOUT (two traces overlaid)
@@ -409,11 +368,11 @@
   // ------------------------------------------------------------------ controls
   function setLayer(i) {
     state.selLayer = i;
-    renderLayerStrip(); renderCurve(); renderReadout();
+    renderDeck(); renderReadout();
   }
   function setStrength(v) {
     state.strength = v / 100; $("strength-val").textContent = v + "%";
-    renderLayerStrip(); renderCurve(); renderReadout();
+    renderDeck(); renderReadout();
   }
 
   // ------------------------------------------------------------------ live badge / rerun
@@ -435,11 +394,11 @@
   async function init() {
     $("strength-slider").addEventListener("input", (e) => setStrength(+e.target.value));
     $("rerun-btn").addEventListener("click", rerun);
-    window.addEventListener("resize", () => { if (isInterventable(selected())) renderCurve(); });
+    window.addEventListener("resize", () => { if (isInterventable(selected())) renderDeck(); });
 
     await loadCard(); ingest(); setChip(); buildSummary(); buildRail();
     if (!state.all.length) {
-      $("necessity-curve").innerHTML = `<div class="panels-loading">No claims in this card.</div>`;
+      $("deck3d").innerHTML = `<div class="panels-loading">No claims in this card.</div>`;
       return;
     }
     // ensure a sensible default layer for the initial interventable claim

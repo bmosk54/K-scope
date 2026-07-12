@@ -174,6 +174,10 @@ def reasoning_trace(bc, pillars, confidence, confound_result):
     t.append({"n": len(t) + 1, "pillar": "confidence",
               "observation": f"overall confidence = {confidence['overall']:.3f}",
               "interpretation": confidence["method"]})
+    # Standardized schema: every trace step carries BOTH `step` and `pillar` (same
+    # value) so a UI can bind to either key regardless of which certify verb produced it.
+    for s in t:
+        s["step"] = s["pillar"]
     return t
 
 

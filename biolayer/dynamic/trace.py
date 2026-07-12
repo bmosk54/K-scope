@@ -12,7 +12,9 @@ card's traces into short prose in ONE batched LLM call — it never gates the fa
 
 
 def _s(n, step, observation, interpretation):
-    return {"n": n, "step": step, "observation": observation,
+    # Standardized schema: carry BOTH `step` and `pillar` (same value) so a UI can bind
+    # to either key regardless of which certify verb produced the trace.
+    return {"n": n, "step": step, "pillar": step, "observation": observation,
             "interpretation": interpretation}
 
 
@@ -24,6 +26,13 @@ def build_claim_trace(sc, cs, live, conf, bc):
     spec = sc.pillars["specificity"]
     s_raw = bc.get("sufficiency_steering", {})
     sp_raw = bc.get("specificity", {})
+    sub = bc.get("substrate", {})
+    p_raw = bc.get("probe", {})
+    nr = bc.get("necessity_readout", {})
+    dim = sub.get("dim")                                   # CLS width (1024 phikon / 1536 h-opt)
+    nnull = sub.get("n_null")                              # matched-random directions per test
+    dpos, dneg = (cs.distractor if getattr(cs, "distractor", None) else (None, None))
+    alpha = s_raw.get("alpha_classwidth")
     t = []
 
     # 1. probe / contrast validation ---------------------------------------
@@ -37,74 +46,104 @@ def build_claim_trace(sc, cs, live, conf, bc):
     verdict = ("PASS" if cs.valid else "WARN: " + "; ".join(cs.warnings))
     if cs.valid and getattr(cs, "flags", ()):
         verdict += " (FLAGGED: " + "; ".join(cs.flags) + ")"
-    t.append(_s(1, "contrast_validation",
-                f"held-out AUROC={cs.heldout_auroc:.3f}; {intensity_txt} -> {verdict}",
-                ("the pool separates the concept and, where intensity was suspected, the "
-                 "signal SURVIVES a controlled re-test (matching removes the nuisance)"
+    dimtxt = f"{dim}-d " if dim else ""
+    ntr, nte = p_raw.get("n_train"), p_raw.get("n_test")
+    n_txt = (f"n={cs.n_pos}(+)/{cs.n_neg}(−) tiles"
+             + (f", {ntr} fit / {nte} held-out" if ntr and nte else ""))
+    t.append(_s(1, "linear_probe + contrast_validation",
+                f"fit a linear probe — L2 logistic regression on the standardized {dimtxt}"
+                f"frozen CLS — for {cs.pos}(+) vs {cs.neg}(−), {n_txt}. held-out AUROC="
+                f"{cs.heldout_auroc:.3f}. nuisance {intensity_txt} -> {verdict}",
+                ("the concept axis is the probe's unit decision direction in standardized "
+                 "CLS space; the pool separates the concept and, where intensity was "
+                 "suspected, the signal survives a controlled intensity-matched re-test"
                  if cs.valid else
                  "the separation does not survive controlling for intensity, or could not "
                  "be adjudicated — treat with caution")))
 
-    # 2. necessity (live or cached) ----------------------------------------
+    # 2. necessity (live source-intervention, or cached readout-space) -----
     if isinstance(live, dict) and live.get("curve"):
         curve = live["curve"]
+        blocks = ", ".join(str(c.get("block_idx", c.get("block"))) for c in curve)
         series = " -> ".join(f"{c['layer']}:{c['necessity_gap']:+.2f}(z{c['gap_vs_null_z']:+.0f})"
                              for c in curve)
-        t.append(_s(2, "necessity_live",
-                    f"LIVE source-intervention on this slide's forward pass — margin-drop "
-                    f"vs matched-random null by layer: {series}; null ~0 throughout. "
-                    f"necessity score={nec.score:.3f} (= fraction of readout-necessity "
-                    f"already irreversible before the readout).",
-                    ("the model's decision on THIS tile causally depends on the concept "
-                     "from mid-network on; early-layer ablation is recomputed downstream "
-                     "(redundancy). intervened_on_input=true -> a per-slide causal claim, "
-                     "not reference-set separability")))
+        nn = live.get("n_null", nnull)
+        watched = live.get("n_watched")
+        t.append(_s(2, "necessity · live source-intervention",
+                    f"for {len(curve)} depths, hooked encoder.layer[{blocks}] and projected "
+                    f"the diff-of-means concept axis OUT of the CLS token in the residual "
+                    f"stream, then let the forward pass recompute to the readout. margin-drop "
+                    f"vs {nn} matched-random unit directions ablated identically"
+                    + (f", measured on {watched} readout-positive tiles of this slide" if watched else "")
+                    + f": {series} (null ~0). necessity score={nec.score:.3f} = fraction of "
+                    f"readout-necessity already irreversible before the readout.",
+                    ("the model's decision on THIS tile causally depends on the concept from "
+                     "mid-network on; early-layer ablation is recomputed downstream "
+                     "(redundancy/Hydra). intervened_on_input=true — a per-slide causal read")))
     else:
-        t.append(_s(2, "necessity_cached",
-                    f"cached readout-space projection; matched-random projections inert. "
-                    f"necessity score={nec.score:.3f}, verdict={nec.verdict}.",
-                    ("necessity is redundancy-limited / near-tautological in readout space; "
-                     "pass a slide (live_ctx) for the real per-slide source-intervention")))
+        base_a, abl_a = nr.get("base_acc"), nr.get("concept_ablated_acc")
+        rm, rs = nr.get("random_ablated_acc_mean"), nr.get("random_ablated_acc_std")
+        detail = (f"probe accuracy {base_a:.3f} -> {abl_a:.3f} (chance 0.50); "
+                  f"{nnull} matched-random unit axes projected out identically left it at "
+                  f"{rm:.3f}±{rs:.3f}." if base_a is not None else "")
+        t.append(_s(2, "necessity · readout-space projection",
+                    f"projected the unit concept axis OUT of the final {dimtxt}CLS (post-hoc, "
+                    f"no forward re-pass). {detail} necessity score={nec.score:.3f}, "
+                    f"verdict={nec.verdict}.",
+                    ("redundancy-limited: mid-layer ablation is recomputed downstream, so only "
+                     "the readout bites — near-tautological. pass a slide (live_ctx) for the "
+                     "real per-slide source-intervention through the network")))
 
     # 3. sufficiency (caveated secondary) ----------------------------------
-    t.append(_s(3, "sufficiency",
-                f"inject the concept direction: flip {s_raw.get('concept_flip_rate', 0):.2f} "
-                f"vs matched-random {s_raw.get('random_flip_rate_mean', 0):.2f} "
-                f"(score={suf.score:.3f}, z>={min(abs(suf.z), 999):.0f}).",
+    at = f"α={alpha:.2f} (one inter-class 'class-width' along the axis)" if alpha is not None else "α=class-width"
+    t.append(_s(3, "sufficiency · steering / injection",
+                f"added the concept direction to held-out {cs.neg} CLS vectors, {at}: "
+                f"{s_raw.get('concept_flip_rate', 0):.2f} crossed the probe boundary to "
+                f"{cs.pos}, vs {s_raw.get('random_flip_rate_mean', 0):.2f}±"
+                f"{s_raw.get('random_flip_rate_std', 0):.2f} for {nnull} matched-random unit "
+                f"directions injected at the same α. score={suf.score:.3f}.",
                 ("a concept-specific steering axis — but near-circular (inject the "
                  "class-mean-diff axis, score a probe built on it), so reported as a "
                  "caveated SECONDARY; necessity + specificity carry the verdict")))
 
     # 4. specificity -------------------------------------------------------
     cos = sp_raw.get("cos_with_concept_axis")
-    t.append(_s(4, "specificity",
-                f"ablate the orthogonal distractor axis"
-                + (f" (cos with concept = {cos:.3f})" if cos is not None else "")
-                + f"; target probe {'intact' if spec.verdict != 'NULL' else 'leaked'}. "
-                f"score={spec.score:.3f}.",
-                ("the effect is targeted to the concept axis, not general damage — the "
-                 "distractor is near-orthogonal and its ablation leaves the target intact")))
+    ta, ba = sp_raw.get("target_acc_after_distractor_ablation"), sp_raw.get("base_acc")
+    dtxt = f"{dpos} vs {dneg}" if dpos else "an orthogonal pair"
+    t.append(_s(4, "specificity · distractor control",
+                f"fit a SEPARATE linear probe for the distractor pair {dtxt}, expressed its "
+                f"axis in the concept probe's space, and projected THAT out"
+                + (f". cos(concept axis, distractor axis)={cos:.3f} (≈orthogonal)" if cos is not None else "")
+                + (f"; concept probe accuracy after the distractor ablation {ta:.3f} (base {ba:.3f})"
+                   if ta is not None else "")
+                + f" -> target {'intact' if spec.verdict != 'NULL' else 'leaked'}. score={spec.score:.3f}.",
+                ("the effect is targeted to the concept axis, not general damage — ablating a "
+                 "near-orthogonal distractor leaves the concept probe intact")))
 
     # 5. confound gate -----------------------------------------------------
     cf = conf.get("confound_gate", conf) if isinstance(conf, dict) else {}
     if cf.get("status") == "ok":
-        t.append(_s(5, "confound",
-                    f"site-probe alignment: cos(concept, site)={cf.get('cos_concept_with_site', 0):.3f} "
-                    f"(threshold {cf.get('threshold_cos', 0.30)}) -> "
-                    f"{'FLAG' if cf.get('confounded') else 'PASS'}.",
+        t.append(_s(5, "confound · site-probe alignment",
+                    f"fit a linear site/scanner probe (Kömen-style) and measured its axis "
+                    f"against the concept axis: cos(concept, site)="
+                    f"{cf.get('cos_concept_with_site', 0):.3f} (flag threshold "
+                    f"{cf.get('threshold_cos', 0.30)}) -> {'FLAG' if cf.get('confounded') else 'PASS'}.",
                     ("the causal axis overlaps a scanner/site signature — possible batch "
                      "artifact" if cf.get('confounded') else
                      "the causal axis is not aligned with the site signature")))
     else:
-        t.append(_s(5, "confound",
-                    "site-probe UNCHECKED — single-source data (no site/scanner variation).",
+        t.append(_s(5, "confound · site-probe alignment",
+                    "UNCHECKED — single-source data (no site/scanner variation to fit a site "
+                    "probe against). With >=2 sites: fit a linear scanner/site probe and flag "
+                    "if cos(concept axis, site axis) > 0.30.",
                     ("cannot rule out that this is a batch/scanner artifact rather than "
                      "biology; biological validity is NOT established here")))
 
     # 6. multiple comparisons ----------------------------------------------
-    t.append(_s(6, "multiple_comparisons",
-                f"min pillar p={sc.min_p:.4f}; Holm-Bonferroni across the answer's claims "
-                f"-> {'survives' if sc.survives_correction else 'does NOT survive'}.",
+    t.append(_s(6, "multiple_comparisons · Holm-Bonferroni",
+                f"the claim's smallest matched-random-null p-value across pillars = "
+                f"{sc.min_p:.4f}; Holm-Bonferroni step-down over the certifiable claims in "
+                f"this answer -> {'survives' if sc.survives_correction else 'does NOT survive'}.",
                 ("the effect is not a cherry-pick from probing many concepts per answer"
                  if sc.survives_correction else
                  "downgraded: does not survive correction for the many claims tested")))

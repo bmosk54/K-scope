@@ -139,6 +139,46 @@ body { background: var(--studio-bg); }
 .rerun:hover { color: var(--text); border-color: var(--border-strong); }
 .rerun:disabled { opacity: .5; cursor: default; }
 
+/* ---------------------------------------------------------------- THE 3D LAYER STACK */
+/* The encoder's depth as a stack of glass sheets in perspective — Goodfire-style. One
+   sheet per probed block; each shows its concept-ablation margin-drop bar vs the flat
+   matched-random null. Click a sheet to ablate there. */
+.deck-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.deck-hint { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); font-weight: 650; margin-bottom: 4px; }
+.deck-hint .dim { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--text-faint); }
+
+.deck3d { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+  perspective: 1500px; perspective-origin: 50% 38%; }
+.deck { transform-style: preserve-3d; transform: rotateX(46deg) rotateZ(-26deg);
+  display: flex; flex-direction: column; gap: 24px; }
+
+.plane { transform: translateZ(var(--z)); transition: transform .25s cubic-bezier(.4,0,.2,1); cursor: pointer; }
+.plane:hover { transform: translateZ(calc(var(--z) + 22px)); }
+.plane.sel { transform: translateZ(calc(var(--z) + 40px)); }
+
+.sheet { width: 340px; border-radius: 16px; padding: 13px 16px;
+  background: linear-gradient(150deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 22px 42px rgba(0,0,0,.45); }
+.plane.bites .sheet { box-shadow: 0 22px 42px rgba(0,0,0,.45), 0 0 34px -8px var(--v); }
+.plane.sel .sheet { border-color: var(--v);
+  box-shadow: 0 0 0 1px var(--v) inset, 0 28px 52px rgba(0,0,0,.55), 0 0 40px -6px var(--v); }
+
+.sheet-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.sh-block { font-family: var(--mono); font-size: 12.5px; font-weight: 700; color: var(--text); }
+.sh-name { font-family: var(--mono); font-size: 10px; color: var(--text-faint); flex: 1; }
+.sh-flag { font-family: var(--mono); font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 5px;
+  color: var(--neutral); background: rgba(122,127,160,.16); }
+.sh-flag.on { color: var(--v); background: color-mix(in srgb, var(--v) 16%, transparent); }
+
+.sheet-bars { position: relative; height: 16px; border-radius: 5px; background: rgba(255,255,255,.05); overflow: hidden; }
+.sbar-null { position: absolute; left: 0; top: 0; bottom: 0; background: var(--neutral); opacity: .42;
+  border-radius: 5px; transition: width .35s cubic-bezier(.4,0,.2,1); }
+.sbar-gap { position: absolute; left: 0; top: 0; bottom: 0; background: var(--v);
+  border-radius: 5px; transition: width .35s cubic-bezier(.4,0,.2,1); }
+.sheet-foot { display: flex; justify-content: space-between; margin-top: 8px;
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); }
+
 /* THE CURVE — accumulating margin-drop by depth, concept trace + matched-random null band */
 .curve-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .curve-title { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); font-weight: 650; margin-bottom: 6px; }

@@ -151,68 +151,12 @@
     return { centers, blobs, nuclei, stromaCells, lymphs };
   })();
 
-  function heatAt(x, y, claim) {
-    const c = TISSUE_LAYOUT.centers;
-    const glandField = Math.max(...c.map((g) => Math.exp(-Math.pow(Math.hypot(x - g.x, y - g.y) / g.r, 2) * 1.4)));
-    if (!claim || !claim.scores) return 0;
-    switch (claim.concept) {
-      case "tumor_epithelium":
-        return glandField;
-      case "normal_mucosa":
-        return Math.max(0, 1 - glandField * 1.35);
-      case "immune_infiltrate": {
-        const rand = mulberry32(hashStr(claim.id + "heat"));
-        let s = 0;
-        for (let i = 0; i < 10; i++) {
-          const bx = rand(), by = rand();
-          s = Math.max(s, Math.exp(-Math.pow(Math.hypot(x - bx, y - by) / 0.09, 2)));
-        }
-        return Math.max(s, glandField * 0.18);
-      }
-      case "stroma":
-        return glandField * (1 - glandField) * 4.2;
-      default:
-        return 0;
-    }
-  }
-
-  // Grounded, not invented: reconstructs the same intermediate quantities heatAt()
-  // used, so "why is this pixel hot" always matches what's actually drawn.
-  function explainPatch(x, y, claim) {
-    const c = TISSUE_LAYOUT.centers;
-    let nearest = 0, bestD = Infinity;
-    c.forEach((g, i) => {
-      const d = Math.hypot(x - g.x, y - g.y) / g.r;
-      if (d < bestD) { bestD = d; nearest = i; }
-    });
-    const glandField = Math.max(...c.map((g) => Math.exp(-Math.pow(Math.hypot(x - g.x, y - g.y) / g.r, 2) * 1.4)));
-
-    switch (claim.concept) {
-      case "tumor_epithelium":
-        return `inside tumor nest #${nearest + 1}, gland-field ${glandField.toFixed(2)}`;
-      case "normal_mucosa":
-        return `gland-field ${glandField.toFixed(2)} (low = ordered mucosa, not neoplasia)`;
-      case "immune_infiltrate": {
-        const rand = mulberry32(hashStr(claim.id + "heat"));
-        let bestHot = Infinity;
-        for (let i = 0; i < 10; i++) {
-          const bx = rand(), by = rand();
-          bestHot = Math.min(bestHot, Math.hypot(x - bx, y - by));
-        }
-        return bestHot < 0.09
-          ? `inside a lymphocyte aggregate, ${bestHot.toFixed(2)} grid-units from center`
-          : `outside any lymphocyte aggregate (${bestHot.toFixed(2)} away) — faint gland-border baseline`;
-      }
-      case "stroma": {
-        const border = glandField * (1 - glandField) * 4.2;
-        return `tumor–gland boundary, interface score ${border.toFixed(2)}`;
-      }
-      default:
-        return "no heat model wired for this concept";
-    }
-  }
-
-  let selectedPatch = null;
+  // NOTE: the Case tissue render is an unmeasured SCHEMATIC. There is no real per-patch
+  // signal to draw — models.py mean-pools patch tokens into the CLS, so the cached
+  // embeddings are per-tile, not per-patch (biolayer/causal/intervene.py::axis_field is
+  // explicit: "not per-patch spatial"), and the live 14x14 attribution wrapper
+  // (attribution.py::hack_tile) is NotImplementedError. So the Case view shows only what
+  // certify actually measured: axis, causal pillars, contrast gate, and the reasoning trace.
 
   function renderReadoutStatic(claim) {
     const el = document.getElementById("readout-static");
@@ -238,22 +182,23 @@
       `</div>`;
   }
 
-  function renderReadoutLive(claim, patch) {
+  // The real reasoning trace certify emitted for this claim — every battery step, verbatim.
+  // Replaces the old fabricated per-patch readout (seeded-random field + hashed neuron #),
+  // which implied a spatial signal the pooled-CLS substrate does not have.
+  function renderReasoningTrace(claim) {
     const el = document.getElementById("readout-live");
-    if (!patch) {
-      el.innerHTML =
-        `<div class="live-head"><div class="live-title">live patch readout</div></div>` +
-        `<div class="live-empty">Hover the tissue grid — this panel updates in real time with that token's activation, most influential neuron, and a grounded reason.</div>`;
-      return;
-    }
-    const why = explainPatch(patch.xn, patch.yn, claim);
-    const neuron = Math.floor(mulberry32(hashStr(claim.id + ":" + patch.i + "," + patch.j))() * 1024);
+    const trace = (claim.reasoning_trace || []).filter((t) => t.step !== "verdict");
     el.innerHTML =
-      `<div class="live-head"><div class="live-title"><span class="live-dot"></span>live patch readout</div><div class="live-patch-coord">[${patch.i}, ${patch.j}]</div></div>` +
-      `<div class="live-row"><div class="live-row-k">${claim.concept.replace(/_/g, " ")} activation</div><div class="live-row-v accent">${pct(patch.heat, 0)}</div></div>` +
-      `<div class="live-row"><div class="live-row-k">most influential neuron</div><div class="live-row-v">#${neuron}</div></div>` +
-      `<div class="live-row"><div class="live-row-k">layer</div><div class="live-row-v">encoder.layer[16]</div></div>` +
-      `<div class="live-why">${why}</div>`;
+      `<div class="ro-label">Reasoning trace <span class="ro-label-sub">— live from the substrate</span></div>` +
+      (trace.length
+        ? trace
+            .map(
+              (t) =>
+                `<div class="ro-trace-step"><div class="ro-trace-name">${(t.step || "").replace(/_/g, " ")}</div>` +
+                `<div class="ro-trace-obs">${t.observation || ""}</div></div>`
+            )
+            .join("")
+        : `<div class="live-empty">No reasoning trace recorded for this claim.</div>`);
   }
 
   function renderHistology() {
@@ -310,52 +255,8 @@
       .attr("stroke-width", 0.6)
       .attr("fill-opacity", 0.8);
 
-    const cols = 20, rows = 15;
-    const cw = W / cols, ch = H / rows;
-    const cells = [];
-    for (let j = 0; j < rows; j++) {
-      for (let i = 0; i < cols; i++) {
-        const xn = (i + 0.5) / cols, yn = (j + 0.5) / rows;
-        cells.push({ i, j, xn, yn, heat: heatAt(xn, yn, claim) });
-      }
-    }
-    const colorScale = d3.interpolateRgb("#5865ff", "#ef6572");
-    const patchLayer = svg.append("g");
-    patchLayer
-      .selectAll("rect")
-      .data(cells)
-      .join("rect")
-      .attr("class", "patch-cell")
-      .attr("x", (d) => d.i * cw)
-      .attr("y", (d) => d.j * ch)
-      .attr("width", cw)
-      .attr("height", ch)
-      .attr("fill", (d) => colorScale(d.heat))
-      .attr("fill-opacity", (d) => 0.08 + d.heat * 0.62)
-      .attr("stroke", "rgba(255,255,255,0.04)")
-      .attr("stroke-width", 1)
-      .style("cursor", "pointer")
-      .on("mouseover", function (event, d) {
-        if (!d3.select(this).classed("is-selected")) d3.select(this).attr("stroke", "rgba(255,255,255,0.35)");
-        showTip(
-          event,
-          `<div class="tt-title">patch [${d.i},${d.j}]</div><div class="tt-row"><span>activation</span><span>${pct(d.heat, 0)}</span></div><div class="tt-note">encoder.layer[16] CLS-projection onto the "${claim.concept}" axis for this token's receptive field.</div>`
-        );
-        renderReadoutLive(claim, d);
-      })
-      .on("mousemove", moveTip)
-      .on("mouseout", function () {
-        if (!d3.select(this).classed("is-selected")) d3.select(this).attr("stroke", "rgba(255,255,255,0.04)");
-        hideTip();
-        renderReadoutLive(claim, selectedPatch);
-      })
-      .on("click", function (event, d) {
-        patchLayer.selectAll("rect").classed("is-selected", false).attr("stroke", "rgba(255,255,255,0.04)").attr("stroke-width", 1);
-        d3.select(this).classed("is-selected", true).attr("stroke", "#fff").attr("stroke-width", 2);
-        selectedPatch = d;
-        renderReadoutLive(claim, d);
-      });
-
+    // schematic-illustration watermark — no per-patch grid is drawn: the substrate is a
+    // pooled CLS with no image location, so there is nothing real to color per patch.
     svg
       .append("text")
       .attr("x", W - 12)
@@ -364,14 +265,14 @@
       .attr("fill", "#7d82a0")
       .style("font-size", "11px")
       .style("font-family", "var(--mono)")
-      .text(`axis: ${claim.contrast}`);
+      .text("schematic · not measured");
 
     document.getElementById("case-caption").textContent =
-      `${claim.claim} — 20×15 patch tokens colored by projection onto the ${claim.contrast} axis at encoder.layer[16].`;
+      `${claim.claim} — schematic tissue illustration. The substrate pools patch tokens into one CLS vector, ` +
+      `so there is no per-patch signal to render; the certified evidence is on the right.`;
 
     renderReadoutStatic(claim);
-    selectedPatch = null;
-    renderReadoutLive(claim, null);
+    renderReasoningTrace(claim);
   }
 
   // ---------------------------------------------------------------- proof: quadrant map
@@ -384,9 +285,27 @@
 
     const svg = d3.select(container).append("svg").attr("width", width).attr("height", height);
 
+    if (!certifiable.length) {
+      svg.append("text").attr("x", width / 2).attr("y", height / 2).attr("text-anchor", "middle")
+        .attr("fill", "var(--text-faint)").style("font-size", "12px").text("no certifiable claims to plot");
+      return;
+    }
+
+    // Domains are DATA-DRIVEN so live scores (which can fall well below the mock's tight
+    // 0.9–1.0 band) never render off-chart or collapse the sufficiency radius to nothing.
+    const specVals = certifiable.map((d) => d.scores.specificity);
+    const sufVals = certifiable.map((d) => d.scores.sufficiency);
+    let [sLo, sHi] = d3.extent(specVals);
+    if (sLo === sHi) { sLo -= 0.02; sHi += 0.02; }          // flat band -> give it height
+    const sPad = (sHi - sLo) * 0.2 || 0.02;
+
     const x = d3.scaleLinear().domain([0, 1.05]).range([margin.left, width - margin.right]);
-    const y = d3.scaleLinear().domain([0.9, 1.0]).range([height - margin.bottom, margin.top]);
-    const r = d3.scaleSqrt().domain([0.9, 1]).range([8, 18]);
+    const y = d3.scaleLinear().domain([Math.max(0, sLo - sPad), Math.min(1, sHi + sPad)]).nice()
+      .range([height - margin.bottom, margin.top]);
+    // clamp() so a low-sufficiency claim can't produce a sub-floor / negative (invisible) radius.
+    let [rLo, rHi] = d3.extent(sufVals);
+    if (rLo === rHi) rLo = Math.max(0, rLo - 0.1);
+    const r = d3.scaleSqrt().domain([rLo, rHi]).range([7, 17]).clamp(true);
 
     svg
       .append("g")
@@ -451,18 +370,42 @@
         hideTip();
       });
 
+    // Labels: with many claims clustered in a tight specificity band the names collide, so
+    // greedily stagger any that land too close and paint a halo so overlaps stay readable.
+    const placed = [];
+    certifiable.forEach((d, i) => {
+      const px = x(d.scores.necessity);
+      let py = y(d.scores.specificity) - r(d.scores.sufficiency) - 6;
+      let below = false;
+      // if a prior label sits within ~52px horizontally and ~11px vertically, flip below / nudge
+      for (const p of placed) {
+        if (Math.abs(p.px - px) < 52 && Math.abs(p.py - py) < 11) {
+          py = y(d.scores.specificity) + r(d.scores.sufficiency) + 13;
+          below = true;
+          if (placed.some((q) => Math.abs(q.px - px) < 52 && Math.abs(q.py - py) < 11)) py += 11;
+          break;
+        }
+      }
+      py = Math.max(12, Math.min(height - margin.bottom - 2, py));
+      placed.push({ px, py, text: (d.concept || "").replace(/_/g, " "), i, below });
+    });
     svg
       .append("g")
       .selectAll("text.dot-label")
-      .data(certifiable)
+      .data(placed)
       .join("text")
-      .attr("class", "dot-label")
-      .attr("x", (d) => x(d.scores.necessity))
-      .attr("y", (d) => y(d.scores.specificity) - r(d.scores.sufficiency) - 6)
+      .attr("class", (p) => "dot-label" + (p.i === selectedIdx ? " is-selected" : ""))
+      .attr("x", (p) => p.px)
+      .attr("y", (p) => p.py)
       .attr("text-anchor", "middle")
       .style("font-size", "9.5px")
-      .attr("fill", "var(--text-faint)")
-      .text((d) => d.concept.replace(/_/g, " "));
+      .style("pointer-events", "none")
+      .attr("paint-order", "stroke")
+      .attr("stroke", "var(--panel)")
+      .attr("stroke-width", 3)
+      .attr("stroke-linejoin", "round")
+      .attr("fill", (p) => (p.i === selectedIdx ? "var(--text)" : "var(--text-faint)"))
+      .text((p) => p.text);
   }
 
   function renderQuadrantSelection() {
@@ -482,6 +425,13 @@
     const margin = { top: 20, right: 20, bottom: 36, left: 44 };
     const svg = d3.select(container).append("svg").attr("width", width).attr("height", height);
 
+    // Concept-level certify has no per-slide live intervention -> no curve to draw.
+    if (!claim.live_necessity || !claim.live_necessity.curve || !claim.live_necessity.curve.length) {
+      svg.append("text").attr("x", width / 2).attr("y", height / 2).attr("text-anchor", "middle")
+        .attr("fill", "var(--text-faint)").attr("font-family", "var(--mono)").attr("font-size", 12)
+        .text("no live per-slide intervention — concept-level scope");
+      return;
+    }
     const curve = claim.live_necessity.curve;
     const layers = curve.map((c) => c.layer);
     const x = d3.scalePoint().domain(layers).range([margin.left, width - margin.right]).padding(0.5);
@@ -943,8 +893,50 @@
     });
   }
 
+  // ----------------------------------------- prompt console: score + reasoning trace
+  // Shows, in the Prompt window, the certified claim's verdict/scores at the top and the
+  // deterministic reasoning trace as boxes-with-arrows in causal order. Uses the same
+  // per-claim `reasoning_trace` the certify_answer card returns (step OR pillar key).
+  function renderPromptTrace() {
+    const el = document.getElementById("c-trace");
+    if (!el) return;
+    const claim = (typeof currentClaim === "function") ? currentClaim() : null;
+    const steps = claim && (claim.reasoning_trace || []);
+    if (!claim || !steps || !steps.length) { el.hidden = true; el.innerHTML = ""; return; }
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+    const col = COLOR[claim.verdict] || COLOR.accent;
+    const sc = claim.scores || {};
+    const num = (v) => (typeof v === "number" ? v.toFixed(2) : "—");
+    // Composite "certify score": geomean of the three pillars — the same aggregate the
+    // population certify uses (geomean(necessity, sufficiency, specificity)).
+    const g = ["necessity", "sufficiency", "specificity"].map((k) => Math.max(0, sc[k] || 0));
+    const total = Math.pow(g[0] * g[1] * g[2], 1 / 3);
+    const boxes = steps
+      .map((s, i) => {
+        const name = esc((s.step || s.pillar || "").toString().toUpperCase());
+        const arrow = i < steps.length - 1 ? `<span class="ct-arrow" aria-hidden="true">→</span>` : "";
+        return `<div class="ct-box"><span class="ct-n">${esc(s.n)}</span><span class="ct-name">${name}</span><span class="ct-obs">${esc(s.observation)}</span></div>${arrow}`;
+      })
+      .join("");
+    el.innerHTML =
+      `<div class="ct-scoreband">` +
+        `<div class="ct-total"><span class="ct-total-lab">certify score</span>` +
+          `<span class="ct-total-val" style="color:${col}">${total.toFixed(2)}</span>` +
+          `<span class="ct-total-sub">geomean · nec × suf × spec</span></div>` +
+        `<div class="ct-meta"><span class="ct-concept">${esc(claim.concept)}</span>` +
+          `<span class="ct-chip" style="color:${col};border-color:${col}">${esc(claim.verdict)}</span>` +
+          `<span class="ct-sc">nec ${num(sc.necessity)}</span>` +
+          `<span class="ct-sc">suf ${num(sc.sufficiency)}</span>` +
+          `<span class="ct-sc">spec ${num(sc.specificity)}</span></div>` +
+      `</div>` +
+      `<div class="ct-lab2">reasoning trace · causal order</div>` +
+      `<div class="ct-flow">${boxes}</div>`;
+    el.hidden = false;
+  }
+
   // ------------------------------------------------------------- render-all
   function renderAll() {
+    renderPromptTrace();
     renderClaimStrip();
     renderHistology();
     renderAnswerFlow();

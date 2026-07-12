@@ -54,10 +54,12 @@
         </div>
       </div>
 
-      <!-- LAYER STRIP: which block's CLS to project the concept axis out of -->
-      <div class="layerstrip-wrap" id="layerstrip-wrap">
-        <div class="strip-label">Ablation site <span class="dim">— our degree of freedom is depth, not image location. Pick where in the computation to intervene.</span></div>
-        <div class="layer-strip" id="layer-strip"></div>
+      <!-- HERO: 3D layer stack — the encoder's depth, one sheet per probed block.
+           Click a sheet to choose where to project the concept axis out. -->
+      <div class="deck-wrap" id="deck-wrap">
+        <div class="deck-hint">Ablation site <span class="dim">— depth is the only degree of freedom (pooled CLS, no image location). Click a layer to project the concept axis out there; the front sheet is the readout.</span></div>
+        <div class="deck3d" id="deck3d"></div>
+        <div class="curve-legend" id="curve-legend"></div>
       </div>
 
       <!-- STRENGTH: scrub the ablation magnitude -->
@@ -68,14 +70,6 @@
           <span class="strength-val" id="strength-val">100%</span>
         </div>
         <button class="rerun" id="rerun-btn" title="reload the latest certified card">⟳ live</button>
-      </div>
-
-      <!-- HERO: accumulating margin-drop by depth, concept trace + matched-random null band -->
-      <div class="curve-wrap" id="curve-wrap">
-        <div class="curve-title">Decision-margin drop by ablation depth
-          <span class="curve-sub">concept ablation vs matched-random null — the monotone rise is the finding</span></div>
-        <div id="necessity-curve" class="necessity-curve"></div>
-        <div class="curve-legend" id="curve-legend"></div>
       </div>
 
       <div class="stage-caption" id="stage-caption">—</div>
