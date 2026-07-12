@@ -67,6 +67,77 @@ def layered_curve(model_key="phikon_v2", split="train", pos="TUM", neg="LYM",
     }
 
 
+def axis_field(model_key="phikon_v2", split="train", pos="TUM", neg="LYM",
+               space="global", n_null=100, n_samples=48, seed=0, artifacts_dir=None):
+    """Layer-resolved concept-axis ACTIVATION FIELD — the real per-tile projection of the
+    concept direction at each extracted layer, plus the necessity gap vs a matched-random
+    null. Everything is computed from cached embeddings (no slide, no per-patch grid), so
+    it is the honest, slide-free source for a Goodfire-style layer heat visualization.
+
+    Per layer it returns, all REAL:
+      - probe_acc / concept_ablated_acc / random_ablated_acc_mean±std  (separability)
+      - necessity_gap = probe_acc - concept_ablated_acc                (how much ablating
+        the concept axis HERE costs the readout)  vs null_gap and a z-score / `bites`
+      - cells: a balanced sample of per-tile signed projections onto the concept axis,
+        normalised to [-1, 1] — the activations that light up the heat grid.
+    """
+    kw = {} if artifacts_dir is None else {"artifacts_dir": artifacts_dir}
+    layer_names = loader.available_layers(model_key, split, **kw)
+    rng = np.random.default_rng(seed)
+    field = []
+    for layer in layer_names:
+        X, labels, class_names, source = loader.load_layer(
+            model_key, split, layer=layer, space=space, **kw)
+        Xp, y = _probe.select_pair(X, labels, class_names, pos, neg)
+        fit = _probe.fit_probe(Xp, y, seed=seed)
+        Z = fit["scaler"].transform(Xp)
+        u = fit["direction"]
+        base = float(fit["clf"].score(Z, y))
+        concept_abl = float(fit["clf"].score(_proj_out(Z, u), y))
+        R = _probe.matched_random_dirs(Z.shape[1], n_null, seed=seed)
+        null = np.array([fit["clf"].score(_proj_out(Z, r), y) for r in R])
+
+        proj = Z @ u                                   # signed per-tile score on the axis
+        pmax = float(np.abs(proj).max()) or 1.0
+        ip, ineg = np.where(y == 1)[0], np.where(y == 0)[0]
+        k = int(min(n_samples // 2, len(ip), len(ineg)))
+        sel = np.concatenate([rng.choice(ip, k, replace=False),
+                              rng.choice(ineg, k, replace=False)]) if k else np.arange(len(y))
+        cells = [{"v": round(float(proj[i] / pmax), 3), "cls": int(y[i])} for i in sel]
+
+        # d' (Cohen's d) between the two classes on the axis — a REAL graded measure of how
+        # sharply the concept is encoded at this depth; it moves with layer even when the
+        # readout-space probe saturates (probe_acc -> 1, so project-out necessity is
+        # near-tautological, exactly the redundancy caveat we report honestly).
+        pp, pn = proj[y == 1], proj[y == 0]
+        dprime = float((pp.mean() - pn.mean()) /
+                       (np.sqrt(0.5 * (pp.var() + pn.var())) + 1e-9))
+        nec_gap = base - concept_abl
+        null_gap = base - float(null.mean())
+        z = float(np.clip((nec_gap - null_gap) / (float(null.std()) + 1e-6), -999, 999))
+        field.append({
+            "layer": layer,
+            "probe_acc": round(base, 4),
+            "concept_ablated_acc": round(concept_abl, 4),
+            "random_ablated_acc_mean": round(float(null.mean()), 4),
+            "random_ablated_acc_std": round(float(null.std()), 4),
+            "necessity_gap": round(nec_gap, 4),
+            "null_gap": round(null_gap, 4),
+            "z": round(z, 2),
+            "bites": bool(nec_gap > null_gap and z >= 1.645),
+            "separation": round(base - 0.5, 4),
+            "dprime": round(dprime, 3),
+            "n_pos": int(len(ip)), "n_neg": int(len(ineg)),
+            "cells": cells,
+        })
+    return {
+        "status": "axis_field", "space": space, "pos": pos, "neg": neg,
+        "layers": layer_names, "n_null": n_null, "source": source, "field": field,
+        "note": ("real per-tile concept-axis projections + necessity gap vs matched-random "
+                 "null, per extracted layer (cached embeddings; not per-patch spatial)."),
+    }
+
+
 def live_necessity(model_key, images, image_labels, class_names, pos="TUM", neg="LYM",
                    ref_images=None, ref_labels=None, split="train", n_null=30, seed=0,
                    readout_pos=None, readout_neg=None, artifacts_dir=None, encoder=None):

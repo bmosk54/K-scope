@@ -104,7 +104,12 @@ def certify_answer(prompt, answer, track="phikon", split="train", n_null=200,
         # Necessity: LIVE source-intervention if a slide is supplied and the substrate
         # is hook-capable (transformers/phikon); else cached readout-space.
         live_nec, intervened, layered = None, False, None
-        if live_ctx and _live.supports_live(cl.model_key):
+        # Only run live on claims whose label space matches the slide's: live_ctx carries
+        # NCT-labeled tiles, so a HistoPLUS cell claim (different class_names) must NOT run
+        # live against them — it stays cached. live_ctx w/o a dataset_slug marker = no guard.
+        _live_ds = live_ctx.get("dataset_slug") if live_ctx else None
+        if (live_ctx and _live.supports_live(cl.model_key)
+                and (_live_ds is None or _live_ds == cl.dataset_slug)):
             try:
                 # Reuse the resident/warm encoder — never cold-load weights per call.
                 enc = live_ctx.get("encoder")
@@ -177,6 +182,14 @@ def certify_answer(prompt, answer, track="phikon", split="train", n_null=200,
         "assumptions": ASSUMPTIONS,
         "caveat": CAVEAT,
     }
+    # Top-level `reasoning_trace` (same key + step schema as the population `certify` card)
+    # so a UI reading top-level always finds one — the per-claim causal steps, flattened,
+    # each tagged with its concept. Per-claim traces remain under claims[i].reasoning_trace.
+    flat = []
+    for cl in card["claims"]:
+        for s in cl["reasoning_trace"]:
+            flat.append({**s, "concept": cl["concept"]})
+    card["reasoning_trace"] = flat
     # Optional plain-English narration — ONE batched LLM call, off by default so the
     # fast path stays instant. The numbers/verdicts are the deterministic trace's.
     if explain:
@@ -194,9 +207,16 @@ def _conf_badge(conf):
 def _render(c):
     sc = c["spec"]
     cs = c["contrast"]
+    # Substrate is tagged PER CLAIM, not globally: different claims certify in different
+    # latents (tissue vs HistoPLUS cell types), each with its own CLS width. A global
+    # header would mislabel any claim that resolved off the answer's track.
+    dim = config.MODELS.get(c["substrate"], {}).get("dim")
+    substrate_tag = (f"{c['substrate']} · {c['source']} · {dim}-d" if dim
+                     else f"{c['substrate']} · {c['source']}")
     return {
         "claim": c["claim"], "concept": c["concept"], "polarity": c["polarity"],
         "substrate": c["substrate"], "label_source": c["source"],
+        "substrate_dim": dim, "substrate_tag": substrate_tag,
         "verdict": sc.verdict,
         "scores": {n: round(p.score, 3) for n, p in sc.pillars.items()},
         "pillars": {n: {"score": round(p.score, 3), "effect": round(p.effect, 3),
@@ -205,6 +225,7 @@ def _render(c):
                     for n, p in sc.pillars.items()},
         "confounded": sc.confounded,
         "contrast_capped": sc.contrast_capped,
+        "necessity_capped": sc.necessity_capped,
         "survives_multiple_comparisons": sc.survives_correction,
         "live_necessity": ({"intervened_on_input": True,
                             "curve": [{"layer": cc["layer"], "gap": cc["necessity_gap"],

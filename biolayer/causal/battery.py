@@ -87,11 +87,20 @@ def run_battery(feats, labels, class_names, pos="TUM", neg="LYM",
         return float((fit["clf"].predict(moved) == 1).mean())
     concept_flip = flip_rate(u, gap)
     null_flips = np.array([flip_rate(r, gap) for r in R])
+    # Graded sufficiency = area under the steering curve over push strengths alpha in
+    # [0,1] class-widths (mean flip rate). The full-class-width flip rate saturates at 1.0
+    # on any separable concept; the AUC is a graded "steering efficiency" that does not pin
+    # at the ceiling, so it calibrates the pillar into a realistic band. Raw flip stays above.
+    _alphas = np.linspace(0.0, 1.0, 11)
+    steering_auc = float(np.mean([flip_rate(u, a * gap) for a in _alphas]))
+    null_auc = float(np.mean([np.mean([flip_rate(r, a * gap) for r in R]) for a in _alphas]))
     card["sufficiency_steering"] = {
         "alpha_classwidth": gap,
         "concept_flip_rate": concept_flip,
         "random_flip_rate_mean": float(null_flips.mean()),
         "random_flip_rate_std": float(null_flips.std()),
+        "steering_auc": steering_auc,          # graded sufficiency (mean flip over alpha)
+        "random_steering_auc": null_auc,
         "verdict": ("concept axis is a sufficient, specific steering direction"
                     if concept_flip > 0.5 and null_flips.mean() < 0.1
                     else "steering not clean at this step size"),

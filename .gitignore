@@ -28,3 +28,7 @@ Eddie.md
 .nv/
 .sagemaker_remoteAccess_do_not_delete/
 .sagemaker_sql_editor_api_cache/
+
+# Prebuilt patch galleries — large (embed JPEG crops), cached in S3, fetched by
+# dashboard/fetch_galleries.py. Never commit these.
+dashboard/public/*_gallery.html

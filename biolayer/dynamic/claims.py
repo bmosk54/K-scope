@@ -71,9 +71,9 @@ def decompose(answer, preferred_model_key="phikon_v2", split="train", use_bedroc
     """Split a K-Pro answer into atomic Claims resolved against the registry.
 
     `preferred_model_key` is the substrate the caller would like to certify on
-    (tissue concepts honor it; cell-type concepts always resolve to H0-mini). The
-    LLM vocabulary is the FULL concept set — resolution, not the LLM, decides
-    certifiability, so a model can't smuggle in an unprobeable concept.
+    (tissue concepts honor it; cell-type concepts prefer phikon-v2, falling back to
+    H0-mini). The LLM vocabulary is the FULL concept set — resolution, not the LLM,
+    decides certifiability, so a model can't smuggle in an unprobeable concept.
     """
     vocab = [c.concept for c in _concepts.CONCEPTS]
     if use_bedrock:
