@@ -36,6 +36,12 @@
       <div class="nav-item" data-view="gallery"><span class="nav-idx">06</span><span>Slide Gallery</span></div>
     </div>
 
+    <div class="sidebar-foot">
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle light or dark theme">
+        <span class="tt-ico" id="theme-icon">◐</span><span id="theme-label">Dark</span>
+      </button>
+    </div>
+
   </div>
 
   <!-- ============================================================ MAIN -->
@@ -46,11 +52,7 @@
         <div class="topbar-title" id="topbar-title">Case</div>
         <div class="topbar-tag" id="topbar-tag">one claim, followed end to end</div>
       </div>
-      <div class="topbar-right">
-        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle light or dark theme">
-          <span class="tt-ico">🌓</span><span id="theme-label">Dark</span> mode
-        </button>
-      </div>
+      <div class="topbar-right"></div>
     </div>
 
     <!-- ============================== INFERENCE CONSOLE (slide -> answer -> certify) -->
@@ -340,20 +342,34 @@
   (function () {
     var root = document.documentElement,
         btn = document.getElementById("theme-toggle"),
-        lab = document.getElementById("theme-label");
+        lab = document.getElementById("theme-label"),
+        ico = document.getElementById("theme-icon");
     var mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
     function current() {
       var t = root.getAttribute("data-theme");
       if (t) return t;
       return mq && mq.matches ? "dark" : "light";
     }
-    function sync() { if (lab) lab.textContent = current() === "dark" ? "Light" : "Dark"; }
+    function sync() {
+      var dark = current() === "dark";
+      if (lab) lab.textContent = dark ? "Light" : "Dark";     // label = the mode you'll switch TO
+      if (ico) ico.textContent = dark ? "☀" : "◐";
+    }
+    // Drive the embedded Slide Gallery (same origin) off this one toggle so the whole UI themes
+    // uniformly. On its first load the gallery reads the shared kscope:theme key itself.
+    function pushGallery(mode) {
+      try {
+        var f = document.getElementById("gallery-frame");
+        if (f && f.contentWindow && f.contentWindow.__applyTheme) f.contentWindow.__applyTheme(mode);
+      } catch (e) {}
+    }
     sync();
     if (btn) btn.addEventListener("click", function () {
       var next = current() === "dark" ? "light" : "dark";
       root.setAttribute("data-theme", next);
       try { localStorage.setItem("kscope:theme", next); } catch (e) {}
       sync();
+      pushGallery(next);
     });
     if (mq && mq.addEventListener) mq.addEventListener("change", sync);
   })();

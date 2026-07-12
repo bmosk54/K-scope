@@ -169,6 +169,7 @@ a.nav-item.nav-link { color: var(--text-dim); text-decoration: none; }
 .sidebar-foot { margin-top: auto; padding-top: 18px; border-top: 1px solid var(--border); }
 .sidebar-foot-line { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); }
 .sidebar-foot-line.dim { color: var(--text-faint); margin-top: 2px; }
+.sidebar-foot .theme-toggle { width: 100%; justify-content: center; }
 
 /* ---------------------------------------------------------------- main */
 .main { display: flex; flex-direction: column; min-width: 0; height: 100vh; }

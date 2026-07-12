@@ -125,7 +125,8 @@ _TEMPLATE = r"""<!DOCTYPE html>
   /* set the theme BEFORE first paint so dark mode never flashes light on reload */
   (function () {
     try {
-      var m = localStorage.getItem('gallery-theme')
+      // shared key with the dashboard (same origin) so the whole UI themes uniformly
+      var m = localStorage.getItem('kscope:theme') || localStorage.getItem('gallery-theme')
               || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
       document.documentElement.setAttribute('data-theme', m);
     } catch (e) {}
@@ -218,9 +219,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
     pointer-events: none; box-sizing: border-box; border-radius: 2px; min-width: 6px; min-height: 6px;
     border: 2px dashed #ff1f2e;
     box-shadow: 0 0 0 1px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.55); }
-  /* bold red arrow that points at the (tiny) 14×14 patch box from the top-right */
-  .unit-arrow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
-    overflow: visible; filter: drop-shadow(0 1px 2px rgba(0,0,0,.55)); }
+  /* bold red arrow that points at the (tiny) 14×14 patch box from the top-right. Toggled via
+     the .show class, NOT the [hidden] attribute — SVGElement has no reflecting .hidden IDL prop,
+     so `svg.hidden = false` would leave the attribute set and CSS would keep it display:none. */
+  .unit-arrow { display: none; position: absolute; inset: 0; width: 100%; height: 100%;
+    pointer-events: none; overflow: visible; filter: drop-shadow(0 1px 2px rgba(0,0,0,.55)); }
+  .unit-arrow.show { display: block; }
 
   /* three regions: thumb rail · stage · aside */
   .layout { display: grid; gap: 20px; margin-top: 16px;
@@ -247,7 +251,10 @@ _TEMPLATE = r"""<!DOCTYPE html>
       .stage-imgbox { container-type: size; }
       .stage-imgwrap { width: min(100cqw, 100cqh); height: auto; aspect-ratio: 1 / 1; }
       .stage-img { height: 100%; aspect-ratio: auto; }
-      .aside, .rail { min-height: 0; overflow-y: auto; }
+      /* aside may scroll; the rail must NOT (overflow-y:auto would force overflow-x and clip
+         the selected thumb's red outline) — pagination already caps it at 6 thumbs. */
+      .aside { min-height: 0; overflow-y: auto; }
+      .rail { min-height: 0; }
     }
   }
 
@@ -390,7 +397,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
           <div class="unit-box box-tile" id="box-tile" hidden></div>
           <div class="unit-box box-patch" id="box-patch" hidden></div>
           <!-- bold arrow that points at the tiny 14×14 box (shown only in patch mode) -->
-          <svg class="unit-arrow" id="unit-arrow" viewBox="0 0 100 100" hidden aria-hidden="true">
+          <svg class="unit-arrow" id="unit-arrow" viewBox="0 0 100 100" aria-hidden="true">
             <defs>
               <marker id="ua-head" markerUnits="userSpaceOnUse" markerWidth="7" markerHeight="7"
                       refX="4.6" refY="3" orient="auto">
@@ -552,19 +559,26 @@ _TEMPLATE = r"""<!DOCTYPE html>
     tRoot.setAttribute('data-theme', mode);
     void tRoot.offsetWidth;                                  // force the recalc while frozen
     requestAnimationFrame(() => tRoot.classList.remove('theme-switch'));
-    tIcon.textContent = mode === 'dark' ? '☀' : '◐';
-    tLabel.textContent = mode === 'dark' ? 'Light' : 'Dark';
+    if (tIcon) tIcon.textContent = mode === 'dark' ? '☀' : '◐';
+    if (tLabel) tLabel.textContent = mode === 'dark' ? 'Light' : 'Dark';
   }
+  // Expose applyTheme so the embedding dashboard can drive the gallery's theme from its own
+  // (single, bottom-left) toggle — keeps the whole UI on one uniform switch.
+  window.__applyTheme = applyTheme;
   // localStorage throws a SecurityError on opaque origins (e.g. file://); guard it so a
   // failed theme read/write can't halt the whole script and leave the gallery un-wired.
+  // Shared key with the dashboard (same origin) so a choice made anywhere sticks everywhere.
   let savedTheme = null;
-  try { savedTheme = localStorage.getItem('gallery-theme'); } catch (e) {}
+  try { savedTheme = localStorage.getItem('kscope:theme') || localStorage.getItem('gallery-theme'); } catch (e) {}
   applyTheme(savedTheme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   tBtn.addEventListener('click', () => {
     const next = tRoot.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
     applyTheme(next);
-    try { localStorage.setItem('gallery-theme', next); } catch (e) {}
+    try { localStorage.setItem('kscope:theme', next); } catch (e) {}
   });
+  // When embedded in the dashboard, the single bottom-left toggle governs the theme — hide the
+  // gallery's own top-right button so there's exactly one control for the whole UI.
+  if (window.parent !== window) tBtn.style.display = 'none';
 
   // source (WSI) switcher: make the header link open a menu of known slides
   // Generic dropdown switcher (used for both the WSI source and the ranking axis): keep only
@@ -627,7 +641,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     boxTile.hidden = false;
     boxTile.style.width = boxTile.style.height = (100 * px / view).toFixed(2) + '%';
     boxPatch.hidden = true;
-    if (unitArrow) unitArrow.hidden = unit !== 'patch';   // arrow only for the tiny 14×14 box
+    if (unitArrow) unitArrow.classList.toggle('show', unit === 'patch');  // arrow only for the tiny 14×14 box
   }
 
   function setEnd(which) {
