@@ -45,6 +45,44 @@ def _resolve_hf_token():
     return None
 
 
+# H-optimus-0 (~4 GB) is downloaded from HuggingFace ONCE and cached in S3; every later
+# job restores it from S3 in-region (fast + no HF rate limits) and loads offline.
+MODEL_CACHE_KEY = "models/hf-cache-h-optimus-0.tar"
+
+
+def _hf_home():
+    p = "/opt/ml/hf-cache"                       # on the 200 GB job volume
+    os.environ["HF_HOME"] = p
+    os.makedirs(p, exist_ok=True)
+    return p
+
+
+def _restore_model_cache(s3, bucket):
+    """Restore the HF cache from S3 if present → offline load, no HF download."""
+    import tarfile
+    home = _hf_home()
+    tarp = "/opt/ml/hf-cache.tar"
+    try:
+        s3.download_file(bucket, MODEL_CACHE_KEY, tarp)
+    except Exception:
+        return False
+    with tarfile.open(tarp) as t:
+        t.extractall(home)
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    print(f"[embed] restored model cache from s3://{bucket}/{MODEL_CACHE_KEY}", flush=True)
+    return True
+
+
+def _seed_model_cache(s3, bucket):
+    """Upload the freshly-downloaded HF cache to S3 for next time."""
+    import tarfile
+    tarp = "/opt/ml/hf-cache.tar"
+    with tarfile.open(tarp, "w") as t:                 # uncompressed: weights already binary
+        t.add(os.environ["HF_HOME"], arcname=".")
+    s3.upload_file(tarp, bucket, MODEL_CACHE_KEY)
+    print(f"[embed] seeded model cache -> s3://{bucket}/{MODEL_CACHE_KEY}", flush=True)
+
+
 def _build_transform(model):
     from timm.data import create_transform, resolve_data_config
     return create_transform(**resolve_data_config(model.pretrained_cfg, model=model))
@@ -68,8 +106,8 @@ def _embed(model, tf, tile_dir, device, batch=32):
     return F, coords, kept
 
 
-def _push_vectors(F, coords, stem, bucket_arn, index):
-    c = boto3.client("s3vectors")
+def _push_vectors(F, coords, stem, bucket_arn, index, region):
+    c = boto3.client("s3vectors", region_name=region)          # explicit region (no default)
     index_arn = f"{bucket_arn}/index/{index}"                   # put_vectors wants indexArn
     vecs = [{"key": f"{stem}/{int(x)}_{int(y)}",
              "data": {"float32": F[i].astype("float32").tolist()},
@@ -80,64 +118,92 @@ def _push_vectors(F, coords, stem, bucket_arn, index):
     return len(vecs)
 
 
-def main():
-    slide_s3 = os.environ["SLIDE_S3"]
-    bucket = os.environ.get("SM_BUCKET", "bucketbiolayer")
-    filters = [f for f in os.environ.get("FILTERS", "whitespace,tissue").split(",") if f]
-    mpp = float(os.environ.get("MPP", "0.5"))
-    tile_px = int(os.environ.get("TILE_PX", "224"))
-    s3 = boto3.client("s3")
+def _slides_from_env(s3):
+    """Slides to process: SLIDE_S3 (single) + SLIDES_S3 (comma) + MANIFEST_S3 (S3 list)."""
+    out = []
+    if os.environ.get("SLIDE_S3"):
+        out.append(os.environ["SLIDE_S3"])
+    out += [x.strip() for x in os.environ.get("SLIDES_S3", "").split(",") if x.strip()]
+    if os.environ.get("MANIFEST_S3"):
+        p = os.environ["MANIFEST_S3"][5:].split("/", 1)
+        body = s3.get_object(Bucket=p[0], Key=p[1])["Body"].read().decode()
+        out += [ln.strip() for ln in body.splitlines() if ln.strip() and not ln.startswith("#")]
+    return out
 
-    # 1. download slide
+
+def process_slide(slide_s3, s3, model, tf, device, cfg):
+    """One slide: download → tile → embed → features to S3 → vectors. Model is shared."""
     b, k = slide_s3[5:].split("/", 1)
     local = os.path.join(tempfile.gettempdir(), os.path.basename(k))
     print(f"[embed] downloading {slide_s3}", flush=True)
     s3.download_file(b, k, local)
     stem = os.path.splitext(os.path.basename(k))[0]
 
-    # 2. tile (MAX_TILES caps kept tiles — for quick trial runs)
-    max_tiles = int(os.environ["MAX_TILES"]) if os.environ.get("MAX_TILES") else None
     tile_dir = os.path.join(tempfile.gettempdir(), "tiles", stem)
-    tile_wsi.tile_slide(local, tile_dir, tile_px=tile_px, target_mpp=mpp,
-                        filters=filters, max_tiles=max_tiles)
+    tile_wsi.tile_slide(local, tile_dir, tile_px=cfg["tile_px"], target_mpp=cfg["mpp"],
+                        filters=cfg["filters"], max_tiles=cfg["max_tiles"])
+    F, coords, kept = _embed(model, tf, tile_dir, device)
+    print(f"[embed] {stem}: embedded {F.shape[0]} tiles -> {F.shape}", flush=True)
 
-    # 3. embed
+    fkey = f"embeddings/wsi/{stem}/hoptimus.npz"
+    buf = io.BytesIO()
+    np.savez_compressed(buf, feats=F, coords=coords, files=np.array([r["file"] for r in kept]))
+    buf.seek(0)
+    s3.upload_fileobj(buf, cfg["bucket"], fkey)
+    print(f"[embed] features -> s3://{cfg['bucket']}/{fkey}", flush=True)
+
+    if cfg["arn"] and cfg["index"] and F.shape[0]:
+        try:
+            n = _push_vectors(F, coords, stem, cfg["arn"], cfg["index"], cfg["region"])
+            print(f"[embed] pushed {n} vectors -> index={cfg['index']}", flush=True)
+        except Exception as e:
+            print(f"[embed] WARN vector push failed ({type(e).__name__}: {e}); "
+                  "features are safe in S3.", flush=True)
+    return stem, int(F.shape[0])
+
+
+def main():
+    os.environ.setdefault("AWS_DEFAULT_REGION", "us-west-2")    # container has no default
+    region = os.environ["AWS_DEFAULT_REGION"]
+    cfg = {
+        "bucket": os.environ.get("SM_BUCKET", "bucketbiolayer"),
+        "filters": [f for f in os.environ.get("FILTERS", "whitespace,tissue").split(",") if f],
+        "mpp": float(os.environ.get("MPP", "0.5")),
+        "tile_px": int(os.environ.get("TILE_PX", "224")),
+        "max_tiles": int(os.environ["MAX_TILES"]) if os.environ.get("MAX_TILES") else None,
+        "arn": os.environ.get("VECTOR_BUCKET_ARN"),
+        "index": os.environ.get("VECTOR_INDEX"),
+        "region": region,
+    }
+    s3 = boto3.client("s3", region_name=region)
+    slides = _slides_from_env(s3)
+    if not slides:
+        raise SystemExit("no slides: set SLIDE_S3 / SLIDES_S3 / MANIFEST_S3")
+
+    # Load H-optimus-0 ONCE for the whole batch (cached in S3 across jobs).
+    restored = _restore_model_cache(s3, cfg["bucket"])
     tok = _resolve_hf_token()
-    if tok:
+    if tok and not restored:                                    # auth only needed for fresh DL
         os.environ["HF_TOKEN"] = tok
         os.environ["HUGGING_FACE_HUB_TOKEN"] = tok
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = hoptimus.load_hoptimus(pretrained=True, device=device)
-    F, coords, kept = _embed(model, _build_transform(model), tile_dir, device)
-    print(f"[embed] {stem}: embedded {F.shape[0]} tiles -> {F.shape}", flush=True)
-
-    # 4. features -> S3
-    fkey = f"embeddings/wsi/{stem}/hoptimus.npz"
-    buf = io.BytesIO()
-    np.savez_compressed(buf, feats=F, coords=coords,
-                        files=np.array([r["file"] for r in kept]))
-    buf.seek(0)
-    s3.upload_fileobj(buf, bucket, fkey)
-    print(f"[embed] features -> s3://{bucket}/{fkey}", flush=True)
-
-    # 5. vectors -> h0-vector (optional; needs an existing index)
-    arn, index = os.environ.get("VECTOR_BUCKET_ARN"), os.environ.get("VECTOR_INDEX")
-    if arn and index and F.shape[0]:
+    if not restored:
         try:
-            n = _push_vectors(F, coords, stem, arn, index)
-            print(f"[embed] pushed {n} vectors -> {arn} index={index}", flush=True)
+            _seed_model_cache(s3, cfg["bucket"])
         except Exception as e:
-            print(f"[embed] WARN vector push failed ({type(e).__name__}: {e}); "
-                  "features are safe in S3. Is the index created with dim 1536?", flush=True)
-    else:
-        print("[embed] no VECTOR_INDEX/ARN set — skipped vector push (features in S3).",
-              flush=True)
+            print(f"[embed] WARN seed cache failed: {e}", flush=True)
+    tf = _build_transform(model)
 
-    # summary artifact
-    os.makedirs(os.environ.get("SM_MODEL_DIR", "/opt/ml/model"), exist_ok=True)
-    with open(os.path.join(os.environ.get("SM_MODEL_DIR", "/opt/ml/model"), "summary.json"), "w") as f:
-        json.dump({"slide": stem, "n_tiles": int(F.shape[0]), "dim": int(F.shape[1] if F.ndim == 2 else 0),
-                   "features_key": fkey, "filters": filters, "mpp": mpp}, f, indent=2)
+    print(f"[embed] processing {len(slides)} slide(s)", flush=True)
+    summary = [dict(zip(("slide", "n_tiles"), process_slide(sl, s3, model, tf, device, cfg)))
+               for sl in slides]
+
+    mdir = os.environ.get("SM_MODEL_DIR", "/opt/ml/model")
+    os.makedirs(mdir, exist_ok=True)
+    with open(os.path.join(mdir, "summary.json"), "w") as f:
+        json.dump({"slides": summary, "dim": 1536, "mpp": cfg["mpp"],
+                   "filters": cfg["filters"]}, f, indent=2)
 
 
 if __name__ == "__main__":

@@ -43,7 +43,7 @@ def _tarball():
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("slide", help="s3:// to an .svs/.tiff in the bucket")
+    ap.add_argument("slides", nargs="+", help="one or more s3:// .svs/.tiff (batched: model loads once)")
     ap.add_argument("--role", default=os.environ.get("SAGEMAKER_ROLE_ARN"))
     ap.add_argument("--instance-type", default="ml.g5.2xlarge")
     ap.add_argument("--filters", default="whitespace,tissue")
@@ -63,7 +63,7 @@ def main():
     s3.upload_fileobj(_tarball(), BUCKET, code_key)
 
     env = {
-        "SLIDE_S3": args.slide, "SM_BUCKET": BUCKET,
+        "SLIDES_S3": ",".join(args.slides), "SM_BUCKET": BUCKET,
         "FILTERS": args.filters, "MPP": args.mpp, "TILE_PX": args.tile_px,
     }
     if args.max_tiles:
@@ -93,7 +93,7 @@ def main():
                         "VolumeSizeInGB": 200},
         StoppingCondition={"MaxRuntimeInSeconds": 21600},
     )
-    print(f"[launch] SUBMITTED {job} on {args.instance_type} for {args.slide}")
+    print(f"[launch] SUBMITTED {job} on {args.instance_type} for {len(args.slides)} slide(s)")
     print(f"[launch] track: aws sagemaker describe-training-job --training-job-name {job} "
           "--query TrainingJobStatus --output text")
 
