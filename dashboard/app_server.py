@@ -278,14 +278,20 @@ def api_autoresearch():
                              "Connection": "keep-alive"})
 
 
+def _no_store(resp):
+    # Demo iterates on JS/CSS live — never let the browser hand back a stale copy.
+    resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    return resp
+
+
 @app.route("/")
 def index():
-    return send_from_directory(PUBLIC, "index.html")
+    return _no_store(send_from_directory(PUBLIC, "index.html"))
 
 
 @app.route("/<path:fn>")
 def static_file(fn):
-    return send_from_directory(PUBLIC, fn)
+    return _no_store(send_from_directory(PUBLIC, fn))
 
 
 if __name__ == "__main__":
