@@ -4,7 +4,7 @@
   "n_tiles": 24,
   "image": "slide.png",
   "cols": 6,
-  "prompt": "Describe cancer cells, tumor-infiltrating lymphocytes, plasma cells, and mitotic figures at the invasive margin.",
+  "prompt": "Give a full diagnostic assessment: tumor grade and mitotic activity, the cellular immune infiltrate, invasive features, and molecular and staging status.",
   "ho_composition": "TUM 42%, LYM 33%, STR 17%, NORM 4%, MUS 4%",
   "tile_agreement": 1.0
 }

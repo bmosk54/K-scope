@@ -79,7 +79,10 @@ def adapt_card(card):
     # declined rows dedupe by their text/reason instead of (null) concept.
     seen, uniq = set(), []
     for c in claims:
-        key = ("nc:" + (c.get("reason") or c.get("claim") or "")) if c["verdict"] == "NOT_CERTIFIABLE" \
+        # certifiable rows dedupe by concept (same concept -> identical scores); declined
+        # rows dedupe by their CLAIM TEXT (they all share one reason, so keying on reason
+        # would wrongly collapse every distinct clinical/molecular claim into one).
+        key = ("nc:" + (c.get("claim") or "")) if c["verdict"] == "NOT_CERTIFIABLE" \
             else ("c:" + str(c.get("concept")))
         if key in seen:
             continue

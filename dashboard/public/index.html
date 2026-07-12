@@ -59,7 +59,7 @@
         </div>
         <div class="io-col">
           <div class="col-label">Prompt</div>
-          <textarea id="c-prompt" class="io-prompt">Describe cancer cells, tumor-infiltrating lymphocytes, plasma cells, and mitotic figures at the invasive margin.</textarea>
+          <textarea id="c-prompt" class="io-prompt">Give a full diagnostic assessment: tumor grade and mitotic activity, the cellular immune infiltrate, invasive features, and molecular and staging status.</textarea>
           <div class="io-row">
             <select id="c-track">
               <option value="phikon">phikon-v2 (1024-d)</option>
@@ -70,7 +70,7 @@
             <span class="console-status" id="c-status"></span>
           </div>
           <div class="col-label">K-Pro answer <span class="dimlabel">(Claude, inferred from the slide)</span></div>
-          <textarea id="c-answer" class="io-answer" placeholder="Submit the slide + prompt to generate the K-Pro answer…"></textarea>
+          <textarea id="c-answer" class="io-answer" placeholder="Submit the slide + prompt to generate the K-Pro answer…">Moderately differentiated adenocarcinoma with malignant glandular cells and frequent mitotic figures in desmoplastic stroma. A brisk tumor-infiltrating lymphocytic infiltrate with admixed plasma cells is present. There is perineural invasion and the tumor is staged pT3N1. The lesion is high-grade and microsatellite-instability-high with a BRAF V600E mutation, portending a poor five-year prognosis.</textarea>
           <div class="io-row">
             <label class="dimlabel"><input type="checkbox" id="c-bedrock" checked> Bedrock decompose</label>
             <button id="c-certify">Run certify →</button>
