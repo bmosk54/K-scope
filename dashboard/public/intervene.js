@@ -84,7 +84,11 @@
   const selected = () => state.all.find((c) => c.id === state.selectedId) || null;
   const isInterventable = (c) =>
     !!(c && c.scores && c.live_necessity && Array.isArray(c.live_necessity.curve) && c.live_necessity.curve.length);
-  const curveOf = (c) => (c && c.live_necessity && c.live_necessity.curve) || [];
+  // Coerce every point's gap/z to a finite number here so downstream .toFixed() calls
+  // (sheets, tooltips, ledger, caveat) can never throw on a live curve missing a field.
+  const num = (v) => (typeof v === "number" && isFinite(v) ? v : 0);
+  const curveOf = (c) => ((c && c.live_necessity && c.live_necessity.curve) || [])
+    .map((p) => ({ ...p, gap: num(p.gap), z: num(p.z) }));
   const nullStd = (pt) => (pt.z ? Math.abs(pt.gap / pt.z) : 0);   // matched-random null σ ≈ gap/z (null mean ~0)
   const capR = (c) => c && c.contrast_validation && c.contrast_validation.intensity_collinearity;
 
@@ -385,7 +389,8 @@
   }
   async function rerun() {
     const btn = $("rerun-btn"); btn.disabled = true; btn.textContent = "⟳ …";
-    try { localStorage.removeItem("biolayer:lastCard"); } catch (e) {}
+    // Reload the latest certified card — do NOT discard the stash (that would silently drop
+    // the just-certified run back to the mock if the backend is cold).
     await loadCard(); ingest(); setChip(); buildSummary(); buildRail(); renderStage();
     btn.disabled = false; btn.textContent = "⟳ live";
   }

@@ -26,6 +26,7 @@
       <div class="nav-item" data-view="proof"><span class="nav-idx">03</span><span>Proof</span></div>
       <div class="nav-item" data-view="verdict"><span class="nav-idx">04</span><span>Verdict</span></div>
       <a class="nav-item nav-link" href="intervene.html"><span class="nav-idx">05</span><span>Intervention Studio</span><span class="nav-ext">↗</span></a>
+      <div class="nav-item" id="nav-research"><span class="nav-idx">06</span><span>AutoResearch</span></div>
     </div>
 
     <div class="sidebar-foot">
@@ -34,6 +35,44 @@
       <div class="sidebar-foot-line dim">frozen phikon-v2 · NCT-CRC-HE</div>
     </div>
   </div>
+
+  <!-- ==================================================== AUTORESEARCH RAIL -->
+  <aside class="research-rail" id="research-rail">
+    <div class="rr-head">
+      <div class="rr-title-row">
+        <div class="rr-title">AutoResearch</div>
+        <button class="rr-collapse" id="rr-collapse" title="collapse">‹</button>
+      </div>
+      <div class="rr-sub">autonomous causal-circuit discovery — probe · certify · locate · ablate · reflect</div>
+    </div>
+
+    <div class="rr-controls">
+      <textarea id="rr-problem" class="rr-problem" rows="2">Characterize the tumor microenvironment.</textarea>
+      <div class="rr-row">
+        <select id="rr-track">
+          <option value="phikon">phikon-v2</option>
+          <option value="h0">H-optimus-0</option>
+        </select>
+        <label class="rr-num">iters <input type="number" id="rr-iters" value="5" min="1" max="12"></label>
+      </div>
+      <div class="rr-row">
+        <label class="rr-check"><input type="checkbox" id="rr-bedrock"> Sonnet propose</label>
+        <label class="rr-check"><input type="checkbox" id="rr-live"> live circuit</label>
+      </div>
+      <div class="rr-row rr-btns">
+        <button id="rr-start" class="rr-start">▶ Run loop</button>
+        <button id="rr-stop" class="rr-stop" disabled>■ Stop</button>
+      </div>
+      <div class="rr-status" id="rr-status">idle</div>
+    </div>
+
+    <div class="rr-circuit-summary" id="rr-circuit-summary" hidden>
+      <div class="rr-sec-label">Discovered causal circuit <span class="rr-mode" id="rr-circuit-mode"></span></div>
+      <div id="rr-circuit-agg"></div>
+    </div>
+
+    <div class="rr-feed" id="rr-feed"></div>
+  </aside>
 
   <!-- ============================================================ MAIN -->
   <div class="main">
@@ -138,7 +177,7 @@
             <div class="aflow-head-left">
               <span class="aflow-chip">02</span>
               <div>
-                <div class="aflow-title">One answer, twelve claims, one honest split</div>
+                <div class="aflow-title" id="aflow-title">One answer, twelve claims, one honest split</div>
                 <div class="aflow-sub">Every atomic claim the K-Pro answer makes flows through a concept axis to a verdict. Declined claims are a feature, not a bug.</div>
               </div>
             </div>
@@ -218,5 +257,6 @@
 
 <script src="data.js"></script>
 <script src="app.js"></script>
+<script src="research.js"></script>
 </body>
 </html>

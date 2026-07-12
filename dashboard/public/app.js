@@ -89,8 +89,9 @@
     const v = document.getElementById("strip-verdict");
     v.className = "strip-verdict " + claim.verdict;
     v.textContent = claim.verdict;
-    document.getElementById("strip-declined").textContent =
-      `+ ${declinedCount} declined (cell/subcellular — needs HistoPLUS)`;
+    // Caption reflects the actual declines, not a hardcoded "cell/subcellular" assumption.
+    const declEl = document.getElementById("strip-declined");
+    declEl.textContent = declinedCount ? `+ ${declinedCount} declined` : "";
   }
 
   function selectClaim(idx) {
@@ -166,20 +167,24 @@
       ["specificity", claim.scores.specificity],
     ];
     const cv = claim.contrast_validation;
+    const num = (v, d) => (typeof v === "number" ? v.toFixed(d) : "—");
     el.innerHTML =
-      `<div class="ro-group"><div class="ro-label">Axis</div><div class="ro-axis-value">${claim.contrast}</div></div>` +
+      `<div class="ro-group"><div class="ro-label">Axis</div><div class="ro-axis-value">${claim.contrast || "—"}</div></div>` +
       `<div class="ro-group"><div class="ro-label">Causal pillars</div>` +
       pillars
         .map(
           ([name, v]) =>
-            `<div class="ro-pillar"><div class="ro-pillar-name">${name}</div><div class="ro-pillar-track"><div class="ro-pillar-fill" style="width:${pct(v, 0)};background:${COLOR[claim.verdict]}"></div></div><div class="ro-pillar-value">${v.toFixed(3)}</div></div>`
+            `<div class="ro-pillar"><div class="ro-pillar-name">${name}</div><div class="ro-pillar-track"><div class="ro-pillar-fill" style="width:${pct(v, 0)};background:${COLOR[claim.verdict]}"></div></div><div class="ro-pillar-value">${num(v, 3)}</div></div>`
         )
         .join("") +
       `</div>` +
-      `<div class="ro-group"><div class="ro-label">Contrast gate</div>` +
-      `<div class="ro-gate-row"><span class="badge ${cv.valid ? "PASS" : "CAPPED"}">${cv.valid ? "PASS" : "CAPPED"}</span><span class="ro-gate-detail">AUROC ${cv.heldout_auroc.toFixed(3)} · |r| ${cv.intensity_collinearity.toFixed(3)} (cap 0.60)</span></div>` +
-      (cv.warnings.length ? `<div class="ro-gate-warn">⚠ ${cv.warnings.join("; ")}</div>` : "") +
-      `</div>`;
+      // contrast_validation is optional on live claims — degrade to a neutral row, never throw.
+      (cv
+        ? `<div class="ro-group"><div class="ro-label">Contrast gate</div>` +
+          `<div class="ro-gate-row"><span class="badge ${cv.valid ? "PASS" : "CAPPED"}">${cv.valid ? "PASS" : "CAPPED"}</span><span class="ro-gate-detail">AUROC ${num(cv.heldout_auroc, 3)} · |r| ${num(cv.intensity_collinearity, 3)} (cap 0.60)</span></div>` +
+          ((cv.warnings && cv.warnings.length) ? `<div class="ro-gate-warn">⚠ ${cv.warnings.join("; ")}</div>` : "") +
+          `</div>`
+        : "");
   }
 
   // The real reasoning trace certify emitted for this claim — every battery step, verbatim.
@@ -541,7 +546,10 @@
 
     const W = Math.max(460, container.clientWidth || 640);
     const H = 344;
-    const nodeW = 14, pad = 18;
+    const nodeW = 14;
+    // tighten inter-node padding when the concept column is crowded so thin ribbons + their
+    // labels don't collide (mock has 5-6 nodes; a live answer can have 10+).
+    const pad = Math.max(1, groups.length, verdicts.length) > 7 ? 11 : 18;
     const margin = { left: 4, right: 152, top: 10, bottom: 10 };
     const availH = H - margin.top - margin.bottom;
     const maxNodes = Math.max(1, groups.length, verdicts.length);
@@ -634,8 +642,10 @@
       .on("mouseout", hideTip);
 
     // labels — concept column (smaller), verdict column (larger/bolder), source (right of node w/ bg)
-    function nodeLabel(sel, nodes, size, weight, fill) {
-      sel
+    function nodeLabel(sel, nodes, size, weight, fill, maxPx) {
+      const budget = maxPx && parseFloat(size) ? Math.floor(maxPx / (parseFloat(size) * 0.56)) : 0;
+      const trunc = (s) => (budget && s.length > budget ? s.slice(0, Math.max(1, budget - 1)) + "…" : s);
+      const t = sel
         .selectAll("text")
         .data(nodes.filter((n) => n.h > 0.5))
         .join("text")
@@ -646,9 +656,12 @@
         .style("font-size", size)
         .style("font-weight", weight)
         .attr("fill", fill)
-        .text((n) => n.label);
+        .text((n) => trunc(n.label));
+      // keep the full name reachable on hover when truncated
+      t.append("title").text((n) => n.label);
     }
-    nodeLabel(svg.append("g"), conceptNodes, "11.5px", 500, "var(--text-dim)");
+    // concept labels live between their column and the verdict column — clip to that gap.
+    nodeLabel(svg.append("g"), conceptNodes, "11.5px", 500, "var(--text-dim)", x2 - (x1 + nodeW + 8) - 6);
     nodeLabel(svg.append("g"), verdictNodes, "12.5px", 700, "var(--text)");
 
     // source label: sits over the link fan, so give it a small backing rect for legibility
@@ -757,9 +770,18 @@
     });
   }
 
+  const NUMWORD = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+    "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen"];
   function renderAnswerFlow() {
     const badge = document.getElementById("aflow-badge");
     if (badge) badge.textContent = window.CARD.coverage.summary;
+    // Headline must match the real claim count — never the hardcoded mock's "twelve".
+    const title = document.getElementById("aflow-title");
+    if (title) {
+      const n = window.CARD.claims.length;
+      const word = NUMWORD[n] || String(n);
+      title.textContent = `One answer, ${word} claim${n === 1 ? "" : "s"}, one honest split`;
+    }
     renderSankey();
     renderClaimRail();
   }
@@ -791,21 +813,28 @@
     const badge = document.getElementById("verdict-badge-big");
     badge.className = "verdict-badge-big " + claim.verdict;
     badge.textContent = claim.verdict;
-    const trace = claim.reasoning_trace[claim.reasoning_trace.length - 1];
-    document.getElementById("verdict-sentence").textContent = trace.interpretation;
+    // Prefer the explicit verdict step; fall back to the last step, then to the claim's
+    // notes/reason. Live claims can ship an empty or truncated trace — never assume one.
+    const tr = claim.reasoning_trace || [];
+    const vstep = tr.find((t) => t.step === "verdict") || tr[tr.length - 1];
+    document.getElementById("verdict-sentence").textContent =
+      (vstep && vstep.interpretation) || (claim.notes && claim.notes[0]) || claim.reason || "—";
   }
 
   function renderCoverage() {
     const cov = window.CARD.coverage;
     const grounded = certifiable.filter((c) => c.verdict === "GROUNDED").length;
     const weak = certifiable.filter((c) => c.verdict === "WEAK").length;
-    const total = cov.claims_total;
+    const notCert = (cov && cov.not_certifiable != null) ? cov.not_certifiable : declinedCount;
+    // total from the parts we're drawing so the three segments always sum to exactly 100%
+    // (a stale coverage.claims_total would otherwise under/overflow the rounded bar).
+    const total = Math.max(1, grounded + weak + notCert);
     const bar = d3.select("#coverage-bar");
     bar.selectAll("*").remove();
     [
       [grounded, COLOR.GROUNDED],
       [weak, COLOR.WEAK],
-      [cov.not_certifiable, COLOR.NOT_CERTIFIABLE],
+      [notCert, COLOR.NOT_CERTIFIABLE],
     ].forEach(([n, c]) => {
       bar.append("div").attr("class", "coverage-seg").style("width", (n / total) * 100 + "%").style("background", c);
     });
@@ -915,7 +944,8 @@
       .map((s, i) => {
         const name = esc((s.step || s.pillar || "").toString().toUpperCase());
         const arrow = i < steps.length - 1 ? `<span class="ct-arrow" aria-hidden="true">→</span>` : "";
-        return `<div class="ct-box"><span class="ct-n">${esc(s.n)}</span><span class="ct-name">${name}</span><span class="ct-obs">${esc(s.observation)}</span></div>${arrow}`;
+        const why = s.interpretation ? `<span class="ct-why">${esc(s.interpretation)}</span>` : "";
+        return `<div class="ct-box"><span class="ct-n">${esc(s.n)}</span><span class="ct-name">${name}</span><span class="ct-obs">${esc(s.observation)}</span>${why}</div>${arrow}`;
       })
       .join("");
     el.innerHTML =
