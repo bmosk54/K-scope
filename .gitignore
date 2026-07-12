@@ -32,3 +32,12 @@ Eddie.md
 # Prebuilt patch galleries — large (embed JPEG crops), cached in S3, fetched by
 # dashboard/fetch_galleries.py. Never commit these.
 dashboard/public/*_gallery.html
+
+# Generated render caches + byproducts (regeneratable; galleries live in S3, not git).
+dashboard/public/.payload_*.json
+dashboard/public/*_distribution.png
+dashboard/public/*_patchwork.png
+
+# Large local archives (kept local / on S3 if the app needs them — never in git).
+demo.tar.bz2
+*.tar.bz2

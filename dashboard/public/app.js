@@ -83,6 +83,23 @@
   // ---------------------------------------------------------------- claim strip
   function renderClaimStrip() {
     const claim = currentClaim();
+    // Every claim in the answer can be declined per scope (e.g. a staging/MSI-H-heavy
+    // answer) — then certifiable is empty and currentClaim() is undefined. Render a real
+    // empty-state instead of dereferencing an undefined claim.
+    if (!claim) {
+      document.getElementById("strip-idx").textContent = "0 / 0";
+      document.getElementById("strip-name").textContent = "No certifiable claims";
+      document.getElementById("strip-axis").textContent =
+        "every claim in this answer was declined per scope";
+      const ve = document.getElementById("strip-verdict");
+      ve.className = "strip-verdict NOT_CERTIFIABLE";
+      ve.textContent = "NOT_CERTIFIABLE";
+      const subEl0 = document.getElementById("strip-substrate");
+      if (subEl0) subEl0.textContent = "";
+      document.getElementById("strip-declined").textContent =
+        declinedCount ? `${declinedCount} declined` : "";
+      return;
+    }
     document.getElementById("strip-idx").textContent = `${selectedIdx + 1} / ${certifiable.length}`;
     document.getElementById("strip-name").textContent = claim.claim;
     document.getElementById("strip-axis").textContent = `${claim.concept.replace(/_/g, " ")} · ${claim.contrast}`;
@@ -103,6 +120,7 @@
   }
 
   function selectClaim(idx) {
+    if (!certifiable.length) return;   // nothing certifiable → no claim to select
     selectedIdx = ((idx % certifiable.length) + certifiable.length) % certifiable.length;
     railSelectedId = currentClaim().id;
     hideTip();
@@ -174,6 +192,12 @@
 
   function renderReadoutStatic(claim) {
     const el = document.getElementById("readout-static");
+    if (!claim || !claim.scores) {
+      el.innerHTML =
+        `<div class="live-empty">No certified pillars — every claim in this answer was ` +
+        `declined per scope.</div>`;
+      return;
+    }
     const pillars = [
       ["necessity", claim.scores.necessity],
       ["sufficiency", claim.scores.sufficiency],
@@ -205,7 +229,7 @@
   // which implied a spatial signal the pooled-CLS substrate does not have.
   function renderReasoningTrace(claim) {
     const el = document.getElementById("readout-live");
-    const trace = (claim.reasoning_trace || []).filter((t) => t.step !== "verdict");
+    const trace = ((claim && claim.reasoning_trace) || []).filter((t) => t.step !== "verdict");
     el.innerHTML =
       `<div class="ro-label">Reasoning trace <span class="ro-label-sub">— live from the substrate</span></div>` +
       (trace.length
@@ -514,9 +538,15 @@
   // ---------------------------------------------------------------- proof: necessity curve
   function renderNecessityChart() {
     const claim = currentClaim();
-    document.getElementById("necessity-claim-name").textContent = claim.claim;
     const container = document.getElementById("necessity-chart");
     container.innerHTML = "";
+    if (!claim) {
+      document.getElementById("necessity-claim-name").textContent = "—";
+      d3.select(container).append("div").attr("class", "live-empty")
+        .text("No certifiable claims to plot.");
+      return;
+    }
+    document.getElementById("necessity-claim-name").textContent = claim.claim;
     const width = Math.max(340, container.clientWidth || 420);
     const height = 300;
     const margin = { top: 20, right: 20, bottom: 36, left: 44 };
@@ -809,7 +839,7 @@
   function renderClaimRail() {
     const rail = document.getElementById("claim-rail");
     if (!rail) return;
-    if (railSelectedId === null) railSelectedId = currentClaim().id;
+    if (railSelectedId === null && certifiable.length) railSelectedId = currentClaim().id;
     rail.innerHTML = "";
     const sel = d3.select(rail);
 
@@ -903,6 +933,13 @@
   function renderVerdict() {
     const claim = currentClaim();
     const badge = document.getElementById("verdict-badge-big");
+    if (!claim) {
+      badge.className = "verdict-badge-big NOT_CERTIFIABLE";
+      badge.textContent = "NOT_CERTIFIABLE";
+      document.getElementById("verdict-sentence").textContent =
+        "Every claim in this answer was declined per scope — nothing to certify.";
+      return;
+    }
     badge.className = "verdict-badge-big " + claim.verdict;
     badge.textContent = claim.verdict;
     // Prefer the explicit verdict step; fall back to the last step, then to the claim's

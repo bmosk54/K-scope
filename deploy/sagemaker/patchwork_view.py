@@ -50,7 +50,13 @@ KNOWN_WSIS = [
 
 
 # Concepts the axis switcher can flip between (order preserved). Label shown in the menu.
-AXIS_LABELS = {"TUM": "Tumor epithelium (TUM)", "STR": "Stroma (STR)", "LYM": "Lymphocytes (LYM)"}
+AXIS_LABELS = {"TUM": "Tumor epithelium (TUM)", "STR": "Stroma (STR)", "LYM": "Lymphocytes (LYM)",
+               "VASC": "Vasculature (VASC)"}
+# Per-axis concept reference: TUM/STR/LYM are breast-native (BCSS); VASC is the vessel reference
+# (the only labeled source with blood_vessel/angioinvasion/lymphatics). One-vs-rest for all, so the
+# switcher is uniform. An axis not listed here falls back to the default (colon/NCT-CRC) dataset.
+AXIS_DATASET = {"TUM": "bcss_breast", "STR": "bcss_breast", "LYM": "bcss_breast",
+                "VASC": "bcss_vasculature"}
 
 
 def _resolve_name(wsi_uri, data_stem, slug_override=None, name_override=None):
