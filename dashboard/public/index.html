@@ -59,7 +59,7 @@
         </div>
         <div class="io-col">
           <div class="col-label">Prompt</div>
-          <textarea id="c-prompt" class="io-prompt">Grade this colorectal tumor and characterize the tumor-immune infiltrate: lymphocyte and plasma-cell density, eosinophils, mitotic activity, and any necrosis.</textarea>
+          <textarea id="c-prompt" class="io-prompt">Describe cancer cells, tumor-infiltrating lymphocytes, plasma cells, and mitotic figures at the invasive margin.</textarea>
           <div class="io-row">
             <select id="c-track">
               <option value="phikon">phikon-v2 (1024-d)</option>
@@ -130,6 +130,36 @@
 
       <!-- ========================================================= PROOF -->
       <div class="view" id="view-proof">
+
+        <!-- Answer Flow: how one answer's atomic claims flow, as a group, to a verdict -->
+        <div class="answer-flow">
+          <div class="aflow-head">
+            <div class="aflow-head-left">
+              <span class="aflow-chip">02</span>
+              <div>
+                <div class="aflow-title">One answer, twelve claims, one honest split</div>
+                <div class="aflow-sub">Every atomic claim the K-Pro answer makes flows through a concept axis to a verdict. Declined claims are a feature, not a bug.</div>
+              </div>
+            </div>
+            <div class="aflow-badge" id="aflow-badge">—</div>
+          </div>
+
+          <div class="aflow-body">
+            <div class="aflow-sankey-col">
+              <div id="sankey-chart"></div>
+              <div class="sankey-legend">
+                <span class="skl"><i class="sk-sw GROUNDED"></i>GROUNDED</span>
+                <span class="skl"><i class="sk-sw WEAK"></i>WEAK (capped)</span>
+                <span class="skl"><i class="sk-sw NOT_CERTIFIABLE"></i>NOT_CERTIFIABLE</span>
+              </div>
+            </div>
+            <div class="aflow-rail-col">
+              <div class="rail-head">Click a claim to drive the histology + causal-map + necessity panels.</div>
+              <div class="claim-rail" id="claim-rail"></div>
+            </div>
+          </div>
+        </div>
+
         <div class="proof-grid">
           <div class="proof-col">
             <div class="section-label">Necessity × specificity — every certifiable claim, sized by sufficiency</div>

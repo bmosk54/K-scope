@@ -4,7 +4,7 @@
   "n_tiles": 24,
   "image": "slide.png",
   "cols": 6,
-  "prompt": "Grade this colorectal tumor and characterize the tumor-immune infiltrate: lymphocyte and plasma-cell density, eosinophils, mitotic activity, and any necrosis.",
+  "prompt": "Describe cancer cells, tumor-infiltrating lymphocytes, plasma cells, and mitotic figures at the invasive margin.",
   "ho_composition": "TUM 42%, LYM 33%, STR 17%, NORM 4%, MUS 4%",
   "tile_agreement": 1.0
 }
