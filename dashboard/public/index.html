@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>BioLayer — Causal Evidence Cockpit</title>
+<link rel="stylesheet" href="style.css" />
+<script src="https://unpkg.com/d3@7"></script>
+</head>
+<body>
+<div class="app-shell">
+
+  <!-- ============================================================ SIDEBAR -->
+  <div class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">BL</div>
+      <div>
+        <div class="brand-name">BioLayer</div>
+        <div class="brand-tag">causal microscope</div>
+      </div>
+    </div>
+
+    <div class="nav-list">
+      <div class="nav-item" data-view="case"><span class="nav-idx">01</span><span>Case</span></div>
+      <div class="nav-item" data-view="proof"><span class="nav-idx">02</span><span>Proof</span></div>
+      <div class="nav-item" data-view="verdict"><span class="nav-idx">03</span><span>Verdict</span></div>
+    </div>
+
+    <div class="sidebar-foot">
+      <div class="sidebar-foot-line">certify_answer()</div>
+      <div class="sidebar-foot-line dim">frozen phikon-v2 · NCT-CRC-HE</div>
+    </div>
+  </div>
+
+  <!-- ============================================================ MAIN -->
+  <div class="main">
+
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="topbar-title" id="topbar-title">Case</div>
+        <div class="topbar-tag" id="topbar-tag">one claim, followed end to end</div>
+      </div>
+      <div class="topbar-right">
+        <div class="substrate-label" id="substrate-label">phikon-v2 · ViT-L/24 · frozen</div>
+        <button class="btn-run" id="btn-run">Run certify_answer()</button>
+      </div>
+    </div>
+
+    <div class="claim-strip">
+      <button class="strip-nav" id="claim-prev" aria-label="previous claim">&#8249;</button>
+      <div class="strip-body">
+        <div class="strip-idx" id="strip-idx">1 / 5</div>
+        <div class="strip-name" id="strip-name">—</div>
+        <div class="strip-axis" id="strip-axis">—</div>
+      </div>
+      <div class="strip-verdict" id="strip-verdict"></div>
+      <button class="strip-nav" id="claim-next" aria-label="next claim">&#8250;</button>
+      <div class="strip-declined" id="strip-declined"></div>
+    </div>
+
+    <div class="view-wrap">
+
+      <!-- ========================================================= CASE -->
+      <div class="view active" id="view-case">
+        <div class="case-grid">
+          <div class="stage-col">
+            <div id="tile-stage" class="tile-stage"></div>
+            <div class="tile-caption" id="case-caption">—</div>
+          </div>
+          <div class="readout-col">
+            <div class="readout-panel">
+              <div id="readout-static"></div>
+              <div class="readout-divider"></div>
+              <div id="readout-live"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================= PROOF -->
+      <div class="view" id="view-proof">
+        <div class="proof-grid">
+          <div class="proof-col">
+            <div class="section-label">Necessity × specificity — every certifiable claim, sized by sufficiency</div>
+            <div id="quadrant-chart"></div>
+          </div>
+          <div class="proof-col narrow">
+            <div class="section-label">Layer-resolved necessity — <span id="necessity-claim-name">—</span></div>
+            <div id="necessity-chart"></div>
+          </div>
+        </div>
+        <details class="probe-appendix" id="probe-appendix">
+          <summary>Where the axis came from — agent-designed candidate probes</summary>
+          <div class="probe-appendix-body">
+            <div class="probe-sub" id="probe-sub"></div>
+            <div id="probe-compact-list"></div>
+          </div>
+        </details>
+      </div>
+
+      <!-- ========================================================= VERDICT -->
+      <div class="view" id="view-verdict">
+        <div class="verdict-hero">
+          <div class="verdict-badge-big" id="verdict-badge-big">GROUNDED</div>
+          <div class="verdict-sentence" id="verdict-sentence">—</div>
+        </div>
+
+        <div class="coverage-bar-block">
+          <div class="coverage-bar" id="coverage-bar"></div>
+          <div class="coverage-line" id="coverage-line">—</div>
+        </div>
+
+        <div class="confound-block">
+          <div class="confound-head">
+            <div class="section-label">Confound gate — real biology, or a site/scanner artifact?</div>
+            <div class="confound-badge" id="confound-badge">UNCHECKED</div>
+          </div>
+          <div class="confound-reason" id="confound-reason">—</div>
+          <div id="confound-schematic"></div>
+        </div>
+
+        <details class="build-notes">
+          <summary>Build notes</summary>
+          <div class="build-notes-body">
+            <table class="mini-table" id="tracks-table"></table>
+            <div class="mil-note" id="mil-note"></div>
+          </div>
+        </details>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
