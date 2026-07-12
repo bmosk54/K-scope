@@ -1,0 +1,426 @@
+{
+ "layer": 27,
+ "n_blocks": 40,
+ "ks": [
+  5,
+  20,
+  80,
+  160
+ ],
+ "concepts": {
+  "TUM": {
+   "concept": "TUM",
+   "headline": "The model's 'TUM' call is distributed. Deleting the 160 features it uses drops its confidence from 1.00 to 0.55; deleting 160 RANDOM features only drops it to 0.95. Even 160 features do not overturn the call \u2014 the model has many independent routes to this conclusion, so no single piece of morphology is load-bearing.",
+   "should_i_trust_it": "The belief is highly redundant \u2014 it survives deleting hundreds of features. That means it is ROBUST, but also that it cannot be traced to specific morphology: there is no small set of features to inspect.",
+   "morphology": "The tiles that most drive the model's 'TUM' decision are TUM 100%. Open the evidence card and judge whether that is the morphology you would expect. If it is not, the answer is suspect regardless of how confident the model is.",
+   "fallback": {
+    "MUC": 0.182,
+    "MUS": 0.108,
+    "STR": 0.075
+   },
+   "not_noise": "Every ablation is compared against deleting the same NUMBER of random features. Random: 1.00 -> 0.95 (drop 0.05). Concept features: 1.00 -> 0.55 (drop 0.45).",
+   "baseline": 0.9994,
+   "features_to_overturn": null,
+   "encoding": "DISTRIBUTED / REDUNDANT",
+   "top_features": [
+    1950,
+    3275,
+    2744,
+    4418,
+    2553,
+    5611,
+    316,
+    2602
+   ],
+   "intervention": "Feature directions projected out of every token at every block 27-39 of H-Optimus-0. 12 transformer blocks execute after the edit, so this is a causal intervention on the model's computation, not a linear attribution.",
+   "evidence_card": "sae/CARD_TUM.png",
+   "curves": {
+    "sae": [
+     0.9798,
+     0.9337,
+     0.8348,
+     0.5523
+    ],
+    "random": [
+     0.9987,
+     0.9984,
+     0.9812,
+     0.9513
+    ],
+    "probe": [
+     0.9951,
+     0.9951,
+     0.9951,
+     0.9951
+    ]
+   },
+   "probe_accuracy": 0.9979
+  },
+  "LYM": {
+   "concept": "LYM",
+   "headline": "The model's 'LYM' call is sparse. Deleting the 160 features it uses drops its confidence from 1.00 to 0.25; deleting 160 RANDOM features only drops it to 0.97. Only 20 features are needed to overturn the call entirely \u2014 so this answer rests on a small, inspectable set of visual features.",
+   "should_i_trust_it": "The evidence is concentrated and checkable: look at the exemplar tiles for the few features driving it, and if they are not the morphology you expect, the answer is suspect.",
+   "morphology": "The tiles that most drive the model's 'LYM' decision are LYM 100%. Open the evidence card and judge whether that is the morphology you would expect. If it is not, the answer is suspect regardless of how confident the model is.",
+   "fallback": {
+    "MUS": 0.259,
+    "MUC": 0.2,
+    "STR": 0.099
+   },
+   "not_noise": "Every ablation is compared against deleting the same NUMBER of random features. Random: 1.00 -> 0.97 (drop 0.02). Concept features: 1.00 -> 0.25 (drop 0.75).",
+   "baseline": 0.9986,
+   "features_to_overturn": 20,
+   "encoding": "SPARSE / AUDITABLE",
+   "top_features": [
+    2524,
+    2093,
+    3395,
+    6034,
+    3319,
+    5937,
+    5864,
+    6064
+   ],
+   "intervention": "Feature directions projected out of every token at every block 27-39 of H-Optimus-0. 12 transformer blocks execute after the edit, so this is a causal intervention on the model's computation, not a linear attribution.",
+   "evidence_card": "sae/CARD_LYM.png",
+   "curves": {
+    "sae": [
+     0.7542,
+     0.3044,
+     0.2529,
+     0.2455
+    ],
+    "random": [
+     0.9985,
+     0.9973,
+     0.9831,
+     0.9742
+    ],
+    "probe": [
+     0.9859,
+     0.9859,
+     0.9859,
+     0.9859
+    ]
+   },
+   "probe_accuracy": 1.0
+  },
+  "STR": {
+   "concept": "STR",
+   "headline": "The model's 'STR' call is distributed. Deleting the 160 features it uses drops its confidence from 1.00 to 0.96; deleting 160 RANDOM features only drops it to 0.95. Even 160 features do not overturn the call \u2014 the model has many independent routes to this conclusion, so no single piece of morphology is load-bearing.",
+   "should_i_trust_it": "The belief is highly redundant \u2014 it survives deleting hundreds of features. That means it is ROBUST, but also that it cannot be traced to specific morphology: there is no small set of features to inspect.",
+   "morphology": "The tiles that most drive the model's 'STR' decision are MUS 76%, STR 23%, DEB 1%. Open the evidence card and judge whether that is the morphology you would expect. If it is not, the answer is suspect regardless of how confident the model is.",
+   "fallback": "no coherent fallback",
+   "not_noise": "Every ablation is compared against deleting the same NUMBER of random features. Random: 1.00 -> 0.95 (drop 0.05). Concept features: 1.00 -> 0.96 (drop 0.04).",
+   "baseline": 0.9988,
+   "features_to_overturn": null,
+   "encoding": "DISTRIBUTED / REDUNDANT",
+   "top_features": [
+    5865,
+    5123,
+    4561,
+    1509,
+    4705,
+    5329,
+    3189,
+    465
+   ],
+   "intervention": "Feature directions projected out of every token at every block 27-39 of H-Optimus-0. 12 transformer blocks execute after the edit, so this is a causal intervention on the model's computation, not a linear attribution.",
+   "evidence_card": "sae/CARD_STR.png",
+   "curves": {
+    "sae": [
+     0.998,
+     0.9815,
+     0.9666,
+     0.9587
+    ],
+    "random": [
+     0.9987,
+     0.9975,
+     0.9563,
+     0.9529
+    ],
+    "probe": [
+     0.9901,
+     0.9901,
+     0.9901,
+     0.9901
+    ]
+   },
+   "probe_accuracy": 0.9959
+  },
+  "NORM": {
+   "concept": "NORM",
+   "headline": "The model's 'NORM' call is distributed. Deleting the 160 features it uses drops its confidence from 1.00 to 0.98; deleting 160 RANDOM features only drops it to 0.99. Even 160 features do not overturn the call \u2014 the model has many independent routes to this conclusion, so no single piece of morphology is load-bearing.",
+   "should_i_trust_it": "The belief is highly redundant \u2014 it survives deleting hundreds of features. That means it is ROBUST, but also that it cannot be traced to specific morphology: there is no small set of features to inspect.",
+   "morphology": "The tiles that most drive the model's 'NORM' decision are NORM 89%, TUM 11%. Open the evidence card and judge whether that is the morphology you would expect. If it is not, the answer is suspect regardless of how confident the model is.",
+   "fallback": "no coherent fallback",
+   "not_noise": "Every ablation is compared against deleting the same NUMBER of random features. Random: 1.00 -> 0.99 (drop 0.01). Concept features: 1.00 -> 0.98 (drop 0.02).",
+   "baseline": 0.9997,
+   "features_to_overturn": null,
+   "encoding": "DISTRIBUTED / REDUNDANT",
+   "top_features": [
+    5251,
+    363,
+    5778,
+    177,
+    1666,
+    5168,
+    2748,
+    5250
+   ],
+   "intervention": "Feature directions projected out of every token at every block 27-39 of H-Optimus-0. 12 transformer blocks execute after the edit, so this is a causal intervention on the model's computation, not a linear attribution.",
+   "evidence_card": "sae/CARD_NORM.png",
+   "curves": {
+    "sae": [
+     0.9933,
+     0.9833,
+     0.9962,
+     0.9828
+    ],
+    "random": [
+     0.9995,
+     0.9991,
+     0.999,
+     0.9936
+    ],
+    "probe": [
+     0.9948,
+     0.9948,
+     0.9948,
+     0.9948
+    ]
+   },
+   "probe_accuracy": 0.9993
+  },
+  "MUC": {
+   "concept": "MUC",
+   "headline": "The model's 'MUC' call is distributed. Deleting the 160 features it uses drops its confidence from 0.99 to 0.96; deleting 160 RANDOM features only drops it to 0.97. Even 160 features do not overturn the call \u2014 the model has many independent routes to this conclusion, so no single piece of morphology is load-bearing.",
+   "should_i_trust_it": "The belief is highly redundant \u2014 it survives deleting hundreds of features. That means it is ROBUST, but also that it cannot be traced to specific morphology: there is no small set of features to inspect.",
+   "morphology": "The tiles that most drive the model's 'MUC' decision are MUC 100%. Open the evidence card and judge whether that is the morphology you would expect. If it is not, the answer is suspect regardless of how confident the model is.",
+   "fallback": "no coherent fallback",
+   "not_noise": "Every ablation is compared against deleting the same NUMBER of random features. Random: 0.99 -> 0.97 (drop 0.02). Concept features: 0.99 -> 0.96 (drop 0.03).",
+   "baseline": 0.9909,
+   "features_to_overturn": null,
+   "encoding": "DISTRIBUTED / REDUNDANT",
+   "top_features": [
+    2147,
+    3311,
+    1563,
+    1655,
+    4922,
+    1444,
+    505,
+    4588
+   ],
+   "intervention": "Feature directions projected out of every token at every block 27-39 of H-Optimus-0. 12 transformer blocks execute after the edit, so this is a causal intervention on the model's computation, not a linear attribution.",
+   "evidence_card": "sae/CARD_MUC.png",
+   "curves": {
+    "sae": [
+     0.9892,
+     0.9511,
+     0.9712,
+     0.9595
+    ],
+    "random": [
+     0.9944,
+     0.9906,
+     0.9811,
+     0.9689
+    ],
+    "probe": [
+     0.9841,
+     0.9841,
+     0.9841,
+     0.9841
+    ]
+   },
+   "probe_accuracy": 0.9984
+  },
+  "MUS": {
+   "concept": "MUS",
+   "headline": "The model's 'MUS' call is distributed. Deleting the 160 features it uses drops its confidence from 1.00 to 0.96; deleting 160 RANDOM features only drops it to 0.98. Even 160 features do not overturn the call \u2014 the model has many independent routes to this conclusion, so no single piece of morphology is load-bearing.",
+   "should_i_trust_it": "The belief is highly redundant \u2014 it survives deleting hundreds of features. That means it is ROBUST, but also that it cannot be traced to specific morphology: there is no small set of features to inspect.",
+   "morphology": "The tiles that most drive the model's 'MUS' decision are MUS 100%. Open the evidence card and judge whether that is the morphology you would expect. If it is not, the answer is suspect regardless of how confident the model is.",
+   "fallback": "no coherent fallback",
+   "not_noise": "Every ablation is compared against deleting the same NUMBER of random features. Random: 1.00 -> 0.98 (drop 0.02). Concept features: 1.00 -> 0.96 (drop 0.04).",
+   "baseline": 0.9997,
+   "features_to_overturn": null,
+   "encoding": "DISTRIBUTED / REDUNDANT",
+   "top_features": [
+    5507,
+    4670,
+    3589,
+    1758,
+    700,
+    5759,
+    2057,
+    1929
+   ],
+   "intervention": "Feature directions projected out of every token at every block 27-39 of H-Optimus-0. 12 transformer blocks execute after the edit, so this is a causal intervention on the model's computation, not a linear attribution.",
+   "evidence_card": "sae/CARD_MUS.png",
+   "curves": {
+    "sae": [
+     0.9994,
+     0.9926,
+     0.989,
+     0.9628
+    ],
+    "random": [
+     0.9997,
+     0.9994,
+     0.9987,
+     0.9845
+    ],
+    "probe": [
+     0.9938,
+     0.9938,
+     0.9938,
+     0.9938
+    ]
+   },
+   "probe_accuracy": 0.9984
+  },
+  "ADI": {
+   "concept": "ADI",
+   "headline": "The model's 'ADI' call is distributed. Deleting the 160 features it uses drops its confidence from 1.00 to 0.80; deleting 160 RANDOM features only drops it to 0.97. Even 160 features do not overturn the call \u2014 the model has many independent routes to this conclusion, so no single piece of morphology is load-bearing.",
+   "should_i_trust_it": "The belief is highly redundant \u2014 it survives deleting hundreds of features. That means it is ROBUST, but also that it cannot be traced to specific morphology: there is no small set of features to inspect.",
+   "morphology": "The tiles that most drive the model's 'ADI' decision are ADI 60%, MUS 36%, NORM 2%. Open the evidence card and judge whether that is the morphology you would expect. If it is not, the answer is suspect regardless of how confident the model is.",
+   "fallback": {
+    "STR": 0.096,
+    "MUS": 0.048
+   },
+   "not_noise": "Every ablation is compared against deleting the same NUMBER of random features. Random: 1.00 -> 0.97 (drop 0.03). Concept features: 1.00 -> 0.80 (drop 0.20).",
+   "baseline": 0.9992,
+   "features_to_overturn": null,
+   "encoding": "DISTRIBUTED / REDUNDANT",
+   "top_features": [
+    4272,
+    3884,
+    5145,
+    31,
+    2947,
+    2172,
+    2635,
+    3847
+   ],
+   "intervention": "Feature directions projected out of every token at every block 27-39 of H-Optimus-0. 12 transformer blocks execute after the edit, so this is a causal intervention on the model's computation, not a linear attribution.",
+   "evidence_card": "sae/CARD_ADI.png",
+   "curves": {
+    "sae": [
+     0.9657,
+     0.6886,
+     0.5633,
+     0.8042
+    ],
+    "random": [
+     0.9991,
+     0.9987,
+     0.9836,
+     0.973
+    ],
+    "probe": [
+     0.9811,
+     0.9811,
+     0.9811,
+     0.9811
+    ]
+   },
+   "probe_accuracy": 0.9997
+  },
+  "DEB": {
+   "concept": "DEB",
+   "headline": "The model's 'DEB' call is distributed. Deleting the 160 features it uses drops its confidence from 1.00 to 0.87; deleting 160 RANDOM features only drops it to 0.99. Even 160 features do not overturn the call \u2014 the model has many independent routes to this conclusion, so no single piece of morphology is load-bearing.",
+   "should_i_trust_it": "The belief is highly redundant \u2014 it survives deleting hundreds of features. That means it is ROBUST, but also that it cannot be traced to specific morphology: there is no small set of features to inspect.",
+   "morphology": "The tiles that most drive the model's 'DEB' decision are DEB 99%, STR 1%. Open the evidence card and judge whether that is the morphology you would expect. If it is not, the answer is suspect regardless of how confident the model is.",
+   "fallback": {
+    "MUC": 0.037,
+    "MUS": 0.033
+   },
+   "not_noise": "Every ablation is compared against deleting the same NUMBER of random features. Random: 1.00 -> 0.99 (drop 0.00). Concept features: 1.00 -> 0.87 (drop 0.13).",
+   "baseline": 0.9995,
+   "features_to_overturn": null,
+   "encoding": "DISTRIBUTED / REDUNDANT",
+   "top_features": [
+    5522,
+    2109,
+    1235,
+    2380,
+    3269,
+    3939,
+    2848,
+    5187
+   ],
+   "intervention": "Feature directions projected out of every token at every block 27-39 of H-Optimus-0. 12 transformer blocks execute after the edit, so this is a causal intervention on the model's computation, not a linear attribution.",
+   "evidence_card": "sae/CARD_DEB.png",
+   "curves": {
+    "sae": [
+     0.9984,
+     0.9772,
+     0.9844,
+     0.8721
+    ],
+    "random": [
+     0.9995,
+     0.9989,
+     0.999,
+     0.9945
+    ],
+    "probe": [
+     0.9615,
+     0.9615,
+     0.9615,
+     0.9615
+    ]
+   },
+   "probe_accuracy": 0.9989
+  },
+  "BACK": {
+   "concept": "BACK",
+   "headline": "The model's 'BACK' call is sparse. Deleting the 160 features it uses drops its confidence from 1.00 to 0.21; deleting 160 RANDOM features only drops it to 0.90. Only 20 features are needed to overturn the call entirely \u2014 so this answer rests on a small, inspectable set of visual features.",
+   "should_i_trust_it": "The evidence is concentrated and checkable: look at the exemplar tiles for the few features driving it, and if they are not the morphology you expect, the answer is suspect.",
+   "morphology": "The tiles that most drive the model's 'BACK' decision are BACK 100%. Open the evidence card and judge whether that is the morphology you would expect. If it is not, the answer is suspect regardless of how confident the model is.",
+   "fallback": {
+    "MUS": 0.338,
+    "STR": 0.155,
+    "DEB": 0.126
+   },
+   "not_noise": "Every ablation is compared against deleting the same NUMBER of random features. Random: 1.00 -> 0.90 (drop 0.10). Concept features: 1.00 -> 0.21 (drop 0.79).",
+   "baseline": 0.9997,
+   "features_to_overturn": 20,
+   "encoding": "SPARSE / AUDITABLE",
+   "top_features": [
+    5257,
+    3207,
+    1407,
+    3363,
+    716,
+    5270,
+    1875,
+    3380
+   ],
+   "intervention": "Feature directions projected out of every token at every block 27-39 of H-Optimus-0. 12 transformer blocks execute after the edit, so this is a causal intervention on the model's computation, not a linear attribution.",
+   "evidence_card": "sae/CARD_BACK.png",
+   "curves": {
+    "sae": [
+     0.7592,
+     0.4037,
+     0.1974,
+     0.2109
+    ],
+    "random": [
+     0.9997,
+     0.9989,
+     0.9625,
+     0.903
+    ],
+    "probe": [
+     0.8418,
+     0.8418,
+     0.8418,
+     0.8418
+    ]
+   },
+   "probe_accuracy": 0.9999
+  }
+ }
+}
