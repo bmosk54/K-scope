@@ -1118,13 +1118,14 @@
   }
 
   function initConsole() {
-    // slide metadata (the input image H-optimus reads)
+    // single-tile metadata (one real 224px NCT-CRC-HE tile — tile-level, no spatial adjacency)
     fetch(apiUrl("slide_demo.json")).then((r) => r.json()).then((s) => {
       window._slide = s;
-      $c("slide-meta").innerHTML = "<b>" + (s.substrate || "h_optimus_0") + "</b> · " +
-        s.n_tiles + " tiles → readout <b>" + s.ho_composition + "</b>";
+      $c("slide-meta").innerHTML = "<b>" + (s.substrate || "h_optimus_0") + "</b> · readout <b>" +
+        s.ho_composition + "</b>" +
+        (s.sampling ? '<br><span class="dimlabel">' + s.sampling + "</span>" : "");
       if (s.prompt) $c("c-prompt").value = s.prompt;
-    }).catch(() => { $c("slide-meta").textContent = "slide unavailable"; });
+    }).catch(() => { $c("slide-meta").textContent = "tile unavailable"; });
 
     // Submit slide + prompt -> K-Pro (Claude) infers the answer
     $c("c-submit").addEventListener("click", async () => {

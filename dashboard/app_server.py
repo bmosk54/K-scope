@@ -39,13 +39,14 @@ app = Flask(__name__, static_folder=None)
 DEFAULT_Q = "Assess the tumor-infiltrating lymphocyte response and stromal desmoplasia."
 
 _KPRO_SYS = (
-    "You are K-Pro, a pathology foundation model reading a colorectal H&E slide. You are "
-    "given the slide's tissue composition as classified by the encoder. Answer the "
-    "pathologist's question in 2-3 plain sentences — NO headings, NO markdown, NO report "
-    "format. Anchor on the tissue composition, but characterize like a pathologist: name "
-    "the compartments once each, and where relevant describe the immune infiltrate at the "
-    "CELLULAR level (lymphocytes, plasma cells, eosinophils), mitotic activity / nuclear "
-    "grade, and any necrosis. Mention each finding only once. Be specific and clinical.")
+    "You are K-Pro, a pathology foundation model reading a SINGLE 224px colorectal H&E tile "
+    "(one NCT-CRC-HE tile — tile-level, not a whole slide, with no spatial-adjacency "
+    "information). You are given the encoder's class for this tile. Answer the pathologist's "
+    "question in 2-3 plain sentences — NO headings, NO markdown, NO report format. Anchor on "
+    "the encoder's tile class, but characterize like a pathologist: name the tissue once, and "
+    "where relevant describe the immune infiltrate at the CELLULAR level (lymphocytes, plasma "
+    "cells, eosinophils), mitotic activity / nuclear grade, and any necrosis. Mention each "
+    "finding only once. Be specific and clinical.")
 _OPT_SYS = (
     "You refine a pathology question so it is SPECIFIC and answerable against tile-level "
     "tissue concepts the certifier can ground: tumor epithelium, lymphocytic/immune "
@@ -161,7 +162,7 @@ def api_answer():
         return jsonify({"error": "bedrock unavailable"}), 503
     try:
         answer = client._invoke(
-            _KPRO_SYS, f"Slide tissue composition (encoder readout): {comp}\n\n"
+            _KPRO_SYS, f"Tile encoder class (readout): {comp}\n\n"
                        f"Question: {prompt}\n\nAnswer:", max_tokens=350).strip()
         return jsonify({"answer": answer, "composition": comp,
                         "substrate": slide.get("substrate"), "prompt": prompt})
