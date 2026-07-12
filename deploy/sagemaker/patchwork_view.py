@@ -93,14 +93,19 @@ def crop_payload(reader, regions, regions_bottom=None, win=1536, quality=86,
             "mpp": mpp, "mag": round(10.0 / mpp) if mpp else None}
 
 
-def render_payload(payload, out_html, stem, slide_uri, axis_note="", sources=None, axes=None):
+def render_payload(payload, out_html, stem, slide_uri, axis_note="", sources=None, axes=None, tile=None):
     """CHEAP step: fill the gallery template from a precomputed payload. No ranking, no slide
-    reads — this is the ONLY step a UI/template change affects, so it runs in milliseconds."""
+    reads — this is the ONLY step a UI/template change affects, so it runs in milliseconds.
+    `tile` (optional) carries the 224x224 tile-embedding ranking for the in-gallery Rank-by toggle."""
     out, out_bottom, mpp, mag = payload["out"], payload.get("out_bottom"), payload["mpp"], payload["mag"]
+    tile_top = tile["out"] if tile else None
+    tile_bottom = tile.get("out_bottom") if tile else None
     page = (gallery._TEMPLATE
             .replace("__STEM__", html.escape(stem)).replace("__SRC_TITLE__", html.escape(stem))
             .replace("__SRCURI__", html.escape(slide_uri))
             .replace("__OVERVIEW__", payload["over_uri"]).replace("__PATCHES__", json.dumps(out))
+            .replace("__PATCHES_TILE__", json.dumps(tile_top) if tile_top is not None else "null")
+            .replace("__PATCHES_TILE_BOTTOM__", json.dumps(tile_bottom) if tile_bottom is not None else "null")
             .replace("__PATCHES_BOTTOM__", json.dumps(out_bottom) if out_bottom is not None else "null")
             .replace("__L0W__", str(payload["l0w"])).replace("__L0H__", str(payload["l0h"]))
             .replace("__MPP_NUM__", repr(mpp if mpp else 0.0))
@@ -121,23 +126,34 @@ def _dl(key, local):
     return local
 
 
-def rank_patches(stem, pos, tmp, chunk=20_000, dataset_slug=None):
-    """Score every 14x14 patch of one slide by the pos-vs-rest axis; return sorted meta.
-    float32 + small chunks so a multi-hundred-k-row patch shard doesn't blow local RAM.
+def _fit_axis(pos, dataset_slug=None, neg=None):
+    """Fit the standardized concept direction once, shared by patch- and tile-level ranking
+    so both use the identical axis. Returns (direction, mean, scale).
 
-    dataset_slug picks which reference the concept axis is fit from: None = default colon
-    (NCT-CRC) axes; "bcss_breast" = breast-native TUM/STR/LYM axes. Use the breast axes on a
-    breast WSI so the ranking is not a cross-tissue transfer."""
+    dataset_slug picks which reference the axis is fit from: None = default colon (NCT-CRC);
+    "bcss_breast" = breast-native TUM/STR/LYM axes; "bcss_vasculature" = the vessel reference.
+    neg=None ranks pos-vs-rest; passing neg ranks the pos-vs-neg contrast (e.g. VASC-vs-STR —
+    vessel vs its stromal background, the artery-search axis)."""
+    feats, labels, cn, src = loader.load("h_optimus_0", "train", dataset_slug=dataset_slug)
+    labels, cn = np.asarray(labels), list(cn)
+    if neg:
+        X, yb = P.select_pair(np.asarray(feats), labels, cn, pos, neg)
+        fit = P.fit_probe(X, yb)
+        print(f"[patchwork] '{pos}-vs-{neg}' axis fit from {src}", flush=True)
+    else:
+        fit = P.fit_probe(np.asarray(feats), (labels == cn.index(pos)).astype(int))
+        print(f"[patchwork] '{pos}-vs-rest' axis fit from {src}", flush=True)
+    return (fit["direction"].astype("float32"), fit["scaler"].mean_.astype("float32"),
+            fit["scaler"].scale_.astype("float32"))
+
+
+def rank_patches(stem, pos, tmp, chunk=20_000, dataset_slug=None, neg=None):
+    """Score every 14x14 patch TOKEN of one slide by the concept axis; return sorted meta.
+    float32 + small chunks so a multi-hundred-k-row patch shard doesn't blow local RAM."""
     V = np.load(_dl(f"embeddings/wsi/{stem}/patch_vectors.npy", os.path.join(tmp, f"{stem}_pv.npy")),
                 mmap_mode="r")
     M = np.load(_dl(f"embeddings/wsi/{stem}/patch_meta.npz", os.path.join(tmp, f"{stem}_pm.npz")))
-    feats, labels, cn, src = loader.load("h_optimus_0", "train", dataset_slug=dataset_slug)
-    print(f"[patchwork] '{pos}-vs-rest' axis fit from {src}", flush=True)
-    labels, cn = np.asarray(labels), list(cn)
-    fit = P.fit_probe(np.asarray(feats), (labels == cn.index(pos)).astype(int))
-    d = fit["direction"].astype("float32")
-    mean = fit["scaler"].mean_.astype("float32")
-    scale = fit["scaler"].scale_.astype("float32")
+    d, mean, scale = _fit_axis(pos, dataset_slug, neg)
     n = len(V)
     scores = np.empty(n, dtype="float32")
     for i in range(0, n, chunk):
@@ -148,10 +164,40 @@ def rank_patches(stem, pos, tmp, chunk=20_000, dataset_slug=None):
     return order, scores, M
 
 
+def rank_tiles(stem, pos, tmp, dataset_slug=None, neg=None):
+    """Rank whole 224px TILES by the concept axis using the per-tile (global / CLS) H-optimus
+    embedding in global.npz — the 224x224 'embedding ranking' counterpart to rank_patches.
+    One 1536-d vector per tile (not the 256 patch tokens), so this is cheap. Returns
+    (order, scores, coords) where coords are level-0 tile ORIGINS (x, y)."""
+    Z = np.load(_dl(f"embeddings/wsi/{stem}/global.npz", os.path.join(tmp, f"{stem}_global.npz")))
+    V = np.asarray(Z["vectors"], dtype="float32")          # (n_tiles, 1536) tile-level embeddings
+    coords = np.asarray(Z["coords"])                       # (n_tiles, 2) tile origin, level 0
+    d, mean, scale = _fit_axis(pos, dataset_slug, neg)
+    scores = (((V - mean) / scale) @ d).astype("float32")
+    order = np.argsort(-scores)
+    print(f"[patchwork] scored {len(V)} tiles (score {scores.min():+.2f}..{scores.max():+.2f})", flush=True)
+    return order, scores, coords
+
+
+def _spread(order, center_of, n, min_sep):
+    """Greedy spatial NMS shared by patch/tile ranking: walk `order`, accept a region only if
+    its center is >= min_sep from every already-accepted one -> n spatially DISTINCT regions."""
+    picked, chosen, s2 = [], [], min_sep * min_sep
+    for idx in order:
+        cx, cy = center_of(idx)
+        if all((cx - px) ** 2 + (cy - py) ** 2 >= s2 for px, py in chosen):
+            picked.append(idx); chosen.append((cx, cy))
+            if len(picked) >= n:
+                break
+    return picked
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--wsi", default="s3://bucketbiolayer/wsi/BRACS/BRACS_1003675.svs")
-    ap.add_argument("--pos", default="TUM", help="axis positive class (one-vs-rest) used to rank")
+    ap.add_argument("--pos", default="TUM", help="axis positive class used to rank")
+    ap.add_argument("--neg", default=None, help="axis negative class; default = one-vs-rest. "
+                    "e.g. --pos VASC --neg STR ranks vessel vs its stromal background")
     ap.add_argument("--name", default=None, help="readable display title shown in the gallery "
                     "(default: from KNOWN_WSIS, else the raw slide stem)")
     ap.add_argument("--slug", default=None, help="short filesystem/URL slug for output filenames "
@@ -177,8 +223,8 @@ def main():
     html_path = os.path.join(args.out, f"{slug}_{args.pos}_gallery.html")
 
     # UI-cheap bits (recomputed every run so renames / switcher edits take effect immediately)
-    ref_label = {"bcss_breast": "breast (BCSS)", None: "colon (NCT-CRC)"}.get(
-        args.axis_dataset, args.axis_dataset)
+    ref_label = {"bcss_breast": "breast (BCSS)", "bcss_vasculature": "breast vasculature (BCSS)",
+                 None: "colon (NCT-CRC)"}.get(args.axis_dataset, args.axis_dataset)
     # the concept pill is a switcher: click to flip the ranking axis for THIS slide
     axis_note = (
         '<p class="axis-note">Patches ranked by the '
@@ -197,7 +243,8 @@ def main():
     # cost (13GB mmap + 4.3M-patch matmul + slide crops). Cache them, keyed by the ranking
     # params only, so a UI/template change re-renders in milliseconds. --rerank forces recompute.
     cache_path = os.path.join(args.out, f".payload_{slug}_{args.pos}.json")
-    key = {"data_stem": data_stem, "pos": args.pos, "axis_dataset": args.axis_dataset,
+    key = {"data_stem": data_stem, "pos": args.pos, "neg": args.neg,
+           "axis_dataset": args.axis_dataset,
            "min_sep": args.min_sep, "n_regions": args.n_regions,
            "win": 1536, "quality": 86, "display_max": 1024, "overview_max": 1400}
     payload = None
@@ -213,7 +260,8 @@ def main():
 
     if payload is None:
         local = _dl(args.wsi[5:].split("/", 1)[1], os.path.join(tmp, os.path.basename(args.wsi)))
-        order, scores, M = rank_patches(data_stem, args.pos, tmp, dataset_slug=args.axis_dataset)
+        order, scores, M = rank_patches(data_stem, args.pos, tmp, dataset_slug=args.axis_dataset,
+                                        neg=args.neg)
         reader = open_wsi(local)
         mpp = reader.mpp or 0.25
         step = int(round(224 * max(0.5 / mpp, 1.0)))            # tile footprint in level-0 px
@@ -273,8 +321,40 @@ def main():
         json.dump({"key": key, "payload": payload}, open(cache_path, "w"))
         print(f"[patchwork] ranked + cropped; payload cached -> {os.path.basename(cache_path)}", flush=True)
 
+    # 224x224 tile-embedding ranking (global.npz) — the in-gallery "Rank by" alternative to
+    # patch tokens. Cheap (hundreds–thousands of tiles, no 13GB patch matmul) and cached
+    # SEPARATELY, so it never forces the patch payload to recompute. --rerank forces both.
+    tile_cache = os.path.join(args.out, f".payload_tile_{slug}_{args.pos}.json")
+    tkey = dict(key, unit="tile")
+    tile_payload = None
+    if not args.rerank and os.path.exists(tile_cache):
+        try:
+            tc = json.load(open(tile_cache))
+            if tc.get("key") == tkey:
+                tile_payload = tc["payload"]
+                print(f"[patchwork] TILE CACHE HIT: {os.path.basename(tile_cache)}", flush=True)
+        except Exception:
+            tile_payload = None
+    if tile_payload is None:
+        local = _dl(args.wsi[5:].split("/", 1)[1], os.path.join(tmp, os.path.basename(args.wsi)))
+        reader = open_wsi(local)
+        mpp = reader.mpp or 0.25
+        step = int(round(224 * max(0.5 / mpp, 1.0)))         # 224px tile footprint in level-0 px
+        torder, tscores, tcoords = rank_tiles(data_stem, args.pos, tmp, dataset_slug=args.axis_dataset,
+                                              neg=args.neg)
+        centers = [(int(x + step / 2), int(y + step / 2)) for x, y in tcoords]
+        def tile_regions(idxs):
+            return [(centers[i][0], centers[i][1], f"#{k + 1}", f"score {tscores[i]:+.2f}")
+                    for k, i in enumerate(idxs)]
+        top = _spread(torder, lambda i: centers[i], args.n_regions, args.min_sep)
+        bot = _spread(torder[::-1], lambda i: centers[i], args.n_regions, args.min_sep)
+        tp = crop_payload(reader, tile_regions(top), tile_regions(bot))
+        tile_payload = {"out": tp["out"], "out_bottom": tp["out_bottom"], "step": step}
+        json.dump({"key": tkey, "payload": tile_payload}, open(tile_cache, "w"))
+        print(f"[patchwork] tile-ranked ({len(top)} tiles) -> {os.path.basename(tile_cache)}", flush=True)
+
     meta = render_payload(payload, html_path, title, args.wsi, axis_note=axis_note,
-                          sources=sources, axes=axes)
+                          sources=sources, axes=axes, tile=tile_payload)
     print(f"[patchwork] regional gallery ({meta['n_patches']} regions) -> {html_path}", flush=True)
 
 

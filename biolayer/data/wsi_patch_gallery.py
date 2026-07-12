@@ -100,6 +100,7 @@ def build_gallery(slide: str, patches, out_html: str, scratch: str,
             .replace("__OVERVIEW__", over_uri)
             .replace("__PATCHES__", json.dumps(out))
             .replace("__PATCHES_BOTTOM__", "null")
+            .replace("__PATCHES_TILE__", "null").replace("__PATCHES_TILE_BOTTOM__", "null")
             .replace("__L0W__", str(l0w)).replace("__L0H__", str(l0h))
             .replace("__MPP_NUM__", repr(mpp if mpp else 0.0))
             .replace("__MPP_TXT__", mpp_txt).replace("__MAG_TXT__", mag_txt)
@@ -197,7 +198,8 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .src-item.current::before { content: "●"; font-size: 8px; }
   .src-item:not(.current)::before { content: "○"; font-size: 8px; color: var(--muted); }
 
-  /* rank-end toggle (top vs bottom of the axis) */
+  /* rank-unit ("Rank by") + rank-end (top/bottom) toggles share one wrapping row */
+  .toggle-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 26px; }
   .rank-toggle { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
   .rt-label { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
     color: var(--muted); }
@@ -206,6 +208,14 @@ _TEMPLATE = r"""<!DOCTYPE html>
     font-family: var(--mono); font-size: 12px; padding: 6px 13px; transition: background .12s, color .12s; }
   .rt-btn + .rt-btn { border-left: 1px solid var(--line); }
   .rt-btn[aria-pressed="true"] { background: var(--accent); color: #fff; }
+
+  /* dashed unit boxes drawn on the stage view: subtle scale markers for the ranked unit.
+     Centered on the crop (the crop is centered on the ranked patch/tile); sized in JS. */
+  .stage-imgwrap { position: relative; display: block; width: 100%; }
+  .unit-box { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    pointer-events: none; box-sizing: border-box; border-radius: 3px;
+    border: 1.5px dashed color-mix(in srgb, var(--accent) 48%, transparent); }
+  .unit-box.emph { border-width: 2px; border-color: color-mix(in srgb, var(--accent) 90%, transparent); }
 
   /* three regions: thumb rail · stage · aside */
   .layout { display: grid; gap: 20px; margin-top: 16px;
@@ -322,11 +332,20 @@ _TEMPLATE = r"""<!DOCTYPE html>
     __AXIS_NOTE__
   </header>
 
-  <div id="rank-toggle" class="rank-toggle" hidden>
-    <span class="rt-label">Show along axis</span>
-    <div class="rt-seg">
-      <button id="rt-top" class="rt-btn" type="button" aria-pressed="true">▲ Top 24</button>
-      <button id="rt-bottom" class="rt-btn" type="button" aria-pressed="false">▼ Bottom 24</button>
+  <div class="toggle-row">
+    <div id="unit-toggle" class="rank-toggle" hidden>
+      <span class="rt-label">Rank by</span>
+      <div class="rt-seg">
+        <button id="ut-patch" class="rt-btn" type="button" aria-pressed="true">14×14 patch</button>
+        <button id="ut-tile" class="rt-btn" type="button" aria-pressed="false">224×224 tile</button>
+      </div>
+    </div>
+    <div id="rank-toggle" class="rank-toggle" hidden>
+      <span class="rt-label">Show along axis</span>
+      <div class="rt-seg">
+        <button id="rt-top" class="rt-btn" type="button" aria-pressed="true">▲ Top 24</button>
+        <button id="rt-bottom" class="rt-btn" type="button" aria-pressed="false">▼ Bottom 24</button>
+      </div>
     </div>
   </div>
 
@@ -343,7 +362,11 @@ _TEMPLATE = r"""<!DOCTYPE html>
 
     <section class="stage">
       <div class="stage-title"><span class="dot"></span><b id="st-title">—</b></div>
-      <img class="stage-img" id="stage-img" alt="">
+      <div class="stage-imgwrap" id="unit-overlay">
+        <img class="stage-img" id="stage-img" alt="">
+        <div class="unit-box box-tile" id="box-tile" hidden></div>
+        <div class="unit-box box-patch" id="box-patch" hidden></div>
+      </div>
       <div class="stage-foot">
         <span id="st-note">—</span>
         <span class="scalebar"><span class="bar" id="st-bar" style="width:60px"></span><span id="st-scale">—</span></span>
@@ -357,13 +380,14 @@ _TEMPLATE = r"""<!DOCTYPE html>
         <dl>
           <dt>Center (level 0)</dt><dd id="md-center">—</dd>
           <dt>Origin (level 0)</dt><dd id="md-origin">—</dd>
-          <dt>Crop window</dt><dd id="md-size">—</dd>
-          <dt>Ranked unit</dt><dd id="md-unit">—</dd>
+          <dt>View</dt><dd id="md-size">—</dd>
+          <dt>Unit</dt><dd id="md-unit">—</dd>
           <dt>Resolution</dt><dd>__MPP_TXT__</dd>
           <dt>Magnification</dt><dd>__MAG_TXT__</dd>
         </dl>
-        <p class="hint">The crop is a context window, not the embedded unit: the encoder
-          reads 224&nbsp;px tiles and ranking scores each 14&times;14 patch token.</p>
+        <p class="hint">The <b>view</b> is a fixed context crop; the <b>unit</b> is what ranking
+          scores — a 14&times;14 patch token, or the whole 224&times;224 tile embedding. The dashed
+          square on the view marks that unit at scale.</p>
       </div>
 
       <div class="panel">
@@ -385,7 +409,10 @@ _TEMPLATE = r"""<!DOCTYPE html>
 <script>
   const PATCHES_TOP = __PATCHES__;
   const PATCHES_BOTTOM = __PATCHES_BOTTOM__;        // array (opposite end of the axis) or null
+  const PATCHES_TILE_TOP = __PATCHES_TILE__;        // 224×224 tile-embedding ranking (or null)
+  const PATCHES_TILE_BOTTOM = __PATCHES_TILE_BOTTOM__;
   const MPP = __MPP_NUM__;
+  let unit = 'patch', curEnd = 'top';               // ranking unit (patch|tile) × axis end
   const PAGE = 6;                                   // at most 6 thumbnails on the rail at once
 
   const thumbsEl = document.getElementById('thumbs');
@@ -448,12 +475,17 @@ _TEMPLATE = r"""<!DOCTYPE html>
     document.getElementById('md-desc').textContent = p.desc;
     document.getElementById('md-center').textContent = `${p.cx}, ${p.cy}`;
     document.getElementById('md-origin').textContent = `${p.ox}, ${p.oy}`;
-    document.getElementById('md-size').textContent = `${p.w} × ${p.h} px`;
-    // ranked unit = one 14×14 patch token: the 224px tile's level-0 footprint / 16.
+    document.getElementById('md-size').textContent = `${p.w} px`;         // the view (context crop)
+    // the ranked unit: a 14×14 patch token (224px-tile footprint / 16) or the whole 224×224 tile.
     if (MPP > 0) {
-      const tokPx = Math.round(224 * Math.max(0.5 / MPP, 1) / 16);
-      document.getElementById('md-unit').textContent = `~${tokPx} px · ${(tokPx * MPP).toFixed(1)} µm token`;
-    } else { document.getElementById('md-unit').textContent = '14×14 patch token'; }
+      const tilePx = Math.round(224 * Math.max(0.5 / MPP, 1)), tokPx = Math.round(tilePx / 16);
+      document.getElementById('md-unit').textContent = unit === 'tile'
+        ? `224×224 tile · ~${tilePx} px · ${Math.round(tilePx * MPP)} µm`
+        : `14×14 patch · ~${tokPx} px · ${(tokPx * MPP).toFixed(1)} µm`;
+    } else {
+      document.getElementById('md-unit').textContent = unit === 'tile' ? '224×224 tile' : '14×14 patch token';
+    }
+    updateUnitBoxes(p.w);
     if (MPP > 0) {
       const tileUm = p.w * MPP;
       let target = tileUm / 5, mag = Math.pow(10, Math.floor(Math.log10(target)));
@@ -531,21 +563,59 @@ _TEMPLATE = r"""<!DOCTYPE html>
   wireSwitcher(document.getElementById('ax-switch'), document.getElementById('ax-menu'),
                document.getElementById('ax-caret'), __AXES__, 'src-item ax-item');
 
-  // top / bottom-of-axis toggle (only if a bottom set was supplied)
+  // Ranked-set selection = unit (14×14 patch | 224×224 tile) × axis end (top | bottom).
   const rankToggle = document.getElementById('rank-toggle'),
         rtTop = document.getElementById('rt-top'), rtBottom = document.getElementById('rt-bottom');
-  function switchSet(which) {
-    PATCHES = which === 'bottom' ? PATCHES_BOTTOM : PATCHES_TOP;
+  const unitToggle = document.getElementById('unit-toggle'),
+        utPatch = document.getElementById('ut-patch'), utTile = document.getElementById('ut-tile');
+  const boxTile = document.getElementById('box-tile'), boxPatch = document.getElementById('box-patch');
+
+  function currentSet() {
+    if (unit === 'tile') return curEnd === 'bottom' ? PATCHES_TILE_BOTTOM : PATCHES_TILE_TOP;
+    return curEnd === 'bottom' ? PATCHES_BOTTOM : PATCHES_TOP;
+  }
+  function applySet() {
+    PATCHES = currentSet() || PATCHES_TOP;
     nPages = Math.ceil(PATCHES.length / PAGE);
     page = 0; active = 0;
+    renderBoxes(); renderThumbs(); setActive(0);
+  }
+  // dashed scale boxes over the view: the 224×224 tile (the embedding square) is always drawn;
+  // the 14×14 patch box only when ranking by patch (then the crop is centered on that patch).
+  // Both centered — the crop is centered on the ranked unit — and sized as a % of the view width.
+  function updateUnitBoxes(view) {
+    if (!(MPP > 0) || !boxTile) return;
+    view = view || (PATCHES.length ? PATCHES[active].w : 1536);
+    const tilePx = Math.round(224 * Math.max(0.5 / MPP, 1)), tokPx = Math.round(tilePx / 16);
+    boxTile.hidden = false;
+    boxTile.style.width = boxTile.style.height = (100 * tilePx / view).toFixed(2) + '%';
+    boxTile.classList.toggle('emph', unit === 'tile');
+    boxPatch.hidden = unit !== 'patch';
+    boxPatch.style.width = boxPatch.style.height = (100 * tokPx / view).toFixed(2) + '%';
+    boxPatch.classList.toggle('emph', unit === 'patch');
+  }
+
+  function setEnd(which) {
+    curEnd = which;
     rtTop.setAttribute('aria-pressed', String(which !== 'bottom'));
     rtBottom.setAttribute('aria-pressed', String(which === 'bottom'));
-    renderBoxes(); renderThumbs(); setActive(0);
+    applySet();
+  }
+  function setUnit(u) {
+    unit = u;
+    utPatch.setAttribute('aria-pressed', String(u === 'patch'));
+    utTile.setAttribute('aria-pressed', String(u === 'tile'));
+    applySet();
   }
   if (PATCHES_BOTTOM) {
     rankToggle.hidden = false;
-    rtTop.addEventListener('click', () => switchSet('top'));
-    rtBottom.addEventListener('click', () => switchSet('bottom'));
+    rtTop.addEventListener('click', () => setEnd('top'));
+    rtBottom.addEventListener('click', () => setEnd('bottom'));
+  }
+  if (PATCHES_TILE_TOP && PATCHES_TILE_TOP.length) {
+    unitToggle.hidden = false;
+    utPatch.addEventListener('click', () => setUnit('patch'));
+    utTile.addEventListener('click', () => setUnit('tile'));
   }
 
   renderBoxes();
