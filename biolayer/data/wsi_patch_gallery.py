@@ -402,12 +402,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
               <!-- refX=0 puts the head's BASE on the line's end, so the triangle projects
                    FORWARD to its own point. The shaft (below) stops at that base, so the thin
                    stroke never runs through the head to poke out past it — the head IS the tip. -->
-              <marker id="ua-head" markerUnits="userSpaceOnUse" markerWidth="7" markerHeight="6"
-                      refX="0" refY="3" orient="auto">
-                <path d="M0,0 L7,3 L0,6 Z" fill="#ff1f2e"></path>
+              <marker id="ua-head" markerUnits="userSpaceOnUse" markerWidth="4.5" markerHeight="4"
+                      refX="0" refY="2" orient="auto">
+                <path d="M0,0 L4.5,2 L0,4 Z" fill="#ff1f2e"></path>
               </marker>
             </defs>
-            <line x1="68" y1="27" x2="57.3" y2="40.7" stroke="#ff1f2e" stroke-width="2.2"
+            <line x1="60.3" y1="37.2" x2="54.2" y2="45.1" stroke="#ff1f2e" stroke-width="1.6"
                   marker-end="url(#ua-head)"></line>
           </svg>
         </div>
