@@ -450,3 +450,114 @@ gated standalone download.
 - Extraction is a scratch script (`extract_histoplus.py`); promote to `biolayer/data/` to
   make the substrate reproducible. npz is local/gitignored, not in S3.
 - Confound gate still UNCHECKED (single-source) — unchanged by this work.
+
+---
+
+# Confound adjudication: control, then re-measure (Gate 2b) — cross-model (2026-07-12)
+
+The intensity guard was a **correlational screen**: measure |corr(concept axis, CLS-norm)|,
+threshold, veto. That has the exact failure mode we'd flag in anyone else's faithfulness
+claim — *correlation with a nuisance doesn't prove the nuisance is doing the work.* On
+nucleus crops it vetoed 5/12 cell concepts. We tested whether those vetos are real.
+
+**Method.** Same 1,650 HistoPLUS-typed nucleus crops embedded in **two** encoders —
+H0-mini (768-d, where the labels were generated) and **Phikon-v2 (1024-d, our primary
+substrate)**, index-aligned. For each concept, in each encoder: (1) the raw screen, then
+(2) a **controlled re-test** — rebuild pos/neg pools **matched on CLS-norm** (nuisance
+carries no label info), re-fit, re-measure. "Does the separation survive when intensity
+is balanced?" A `do()` on the confound, not a correlation with it.
+
+| concept | enc | raw AUROC | screen \|r\| | MATCHED AUROC | matched \|r\| | verdict |
+|---|---|---|---|---|---|---|
+| endothelial | h0_mini | 0.967 | 0.082 | 0.980 | 0.054 | clean |
+| endothelial | phikon | 0.965 | 0.140 | 0.891 | 0.093 | clean |
+| apoptotic_body | h0_mini | 0.987 | 0.073 | 0.981 | 0.091 | clean |
+| apoptotic_body | phikon | 0.984 | **0.653** | 0.998 | 0.013 | **survives → over-cautious veto** |
+| plasma_cell | h0_mini | 0.920 | 0.471 | 0.961 | 0.249 | clean |
+| plasma_cell | phikon | 0.941 | **0.613** | 0.893 | 0.131 | **survives → over-cautious veto** |
+| cancer_cell | h0_mini | 1.000 | **0.906** | 0.996 | 0.096 | **survives → over-cautious veto** |
+| cancer_cell | phikon | 1.000 | 0.331 | 1.000 | 0.096 | clean |
+| lymphocyte | h0_mini | 1.000 | **0.843** | 1.000 | 0.017 | **survives → over-cautious veto** |
+| lymphocyte | phikon | 1.000 | **0.654** | 1.000 | 0.021 | **survives → over-cautious veto** |
+| red_blood_cell | h0_mini | 0.935 | **0.869** | 0.807 | 0.070 | **survives → over-cautious veto** |
+| red_blood_cell | phikon | 0.927 | 0.284 | 0.912 | 0.079 | clean |
+
+## Read of the numbers
+
+1. **Every vetoed concept SURVIVES the control** — matched AUROC stays high and matched
+   |r| collapses toward 0. So the concept axis carried real cell-identity signal beyond
+   intensity; the correlation was incidental. **All 6 vetos were false declines.**
+
+2. **The veto flips across encoders for the same concept** — cancer_cell / RBC are vetoed
+   in H0-mini but pass in Phikon; apoptotic_body / plasma_cell are clean in H0-mini but
+   vetoed in Phikon. A biological confound would not depend on the encoder. This proves
+   the CLS-norm screen reads **encoder-specific norm geometry** (+ nucleus size), not a
+   staining confound. (Only `lymphocyte` is vetoed in both — and survives control in both.)
+
+3. **Cross-model replication (the reason to run two encoders):** cell identity separates
+   cleanly in *both* H0-mini and Phikon-v2 after control — the same standard the tissue
+   TUM/LYM replication set. The cell concepts are real, not an H0-mini artifact.
+
+## Pipeline change (implemented)
+
+`contrast.py` now **adjudicates instead of screens** — the exact "suspicion is cheap,
+adjudication is expensive" structure:
+- **Gate 2** (cheap screen) flags a suspect when |r| > 0.60.
+- **Gate 2b** (`_adjudicate_intensity`) fires only on suspects: intensity-match, re-fit,
+  re-measure → `survives-control` (admit **with a flag**), `confound-real` (invalidate),
+  or `undecidable` (< 40 matched samples → **decline**, an unresolved suspicion is not a
+  clean bill). Both numbers — raw screen **and** controlled AUROC — ride on the card
+  (`intensity_screen_r`, `intensity_adjudication`, `intensity_matched_auroc`, `flags`) and
+  in the reasoning trace. Verified: cancer_cell / lymphocyte / RBC flip from vetoed to
+  admitted-with-flag; endothelial stays screen-clean.
+
+Same standard both directions — *intervene, don't correlate* — now applied to confounds,
+not just concepts. Caveat: the CLS-norm proxy remains coarse on crops (conflates with
+nucleus size); a crop-mean pixel proxy would tighten the screen itself. Scripts:
+`extract_dual.py`, `analyze_confound.py`.
+
+---
+
+# Live source-intervention on the timm track (H-optimus-0) — h0 parity (2026-07-12)
+
+The live do() was previously **phikon-only**: `LiveEncoder` hooks a transformers/Dinov2
+block, so the h0 track (timm ViTs) fell back to cached readout-space necessity
+(`intervened_on_input=false`). Now implemented for timm: **`TimmLiveEncoder`** in
+`causal/live.py`, backend-dispatched by `make_live_encoder(model_key)` / gated by
+`supports_live(...)`. Both tracks now run the **full** per-slide source-intervention.
+
+**How it hooks.** H-optimus-0 is a timm `VisionTransformer` (ViT-g/14, 40 blocks, CLS =
+prefix token 0 with 4 register tokens after it, `global_pool='token'`). We manually replay
+`forward_features` (`patch_embed → _pos_embed → patch_drop → norm_pre → blocks → norm`),
+project the concept axis out of the CLS token in the residual stream at block L, and let
+L+1..final RECOMPUTE — the timm analogue of the Dinov2 hook. Same index convention as
+`LiveEncoder`, so `intervene.live_necessity` is backend-agnostic and unchanged.
+
+**Validation (offline, cached weights).**
+- Manual forward **== `forward_features`** (max abs diff **0.0**); `embed(clean)` ==
+  `hidden_cls` readout (diff 0.0) — representation-consistent with `data.models` extraction.
+- Hook fires: a random ablation at block 20 shifts the readout (mean |Δ| 0.006).
+- **Necessity curve, `h_optimus_0` TUM-vs-NORM** (the h0 objective), live per-slide,
+  n_null=8, matched-random null ~0:
+
+  | layer | concept drop | random (mean±sd) | gap | z | bites |
+  |---|---|---|---|---|---|
+  | mid_early | +0.482 | −0.005 ± 0.005 | **+0.487** | +88.7 | ✅ |
+  | mid | +0.888 | −0.007 ± 0.011 | **+0.895** | +82.2 | ✅ |
+  | readout | +2.919 | +0.007 ± 0.027 | **+2.912** | +109.4 | ✅ |
+
+  Same graded, monotonic-toward-readout Hydra pattern phikon shows, now on the ViT-g/14.
+
+**End-to-end `certify_answer` on the h0-family** (`h_optimus_0`, live_ctx, offline): answer
+*"malignant carcinoma epithelium replacing normal mucosa, with a brisk lymphocytic
+infiltrate"* → `necessity_mode = live source-intervention`, `intervened_on_input=true`,
+**2/2 claims GROUNDED** with live curves (`tumor_epithelium` nec 0.167:
+0.49→0.90→2.91; `immune_infiltrate` nec 0.542: 0.73→3.60→6.63). **phikon regression
+clean** — same code path (dispatches to `LiveEncoder`), TUM-vs-LYM curve unchanged
+(early n.s. → readout +2.9).
+
+**Caveats.** (1) The `h0` track still *ships* pointed at `h0_mini` (gated-manual, no
+embeddings) — flip `H0_MODEL_KEY` to `h_optimus_0` (or inject a runtime track) to run today;
+`h0_mini` is also timm, so `TimmLiveEncoder` covers it unchanged once its weights + a
+multi-layer npz are available. (2) H-optimus-0 is ~5× slower than phikon (ViT-g), so the
+live sweep costs proportionally more per claim.

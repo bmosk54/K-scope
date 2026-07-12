@@ -18,6 +18,7 @@ the certificate records `intervened_on_input: false` so it is never overstated.
 """
 from .. import config, tracks
 from ..causal import battery, confound, intervene
+from ..causal import live as _live
 from . import claims as _claims
 from . import concepts as _concepts
 from . import contrast as _contrast
@@ -69,7 +70,7 @@ def certify_answer(prompt, answer, track="phikon", split="train", n_null=200,
         # Necessity: LIVE source-intervention if a slide is supplied and the substrate
         # is hook-capable (transformers/phikon); else cached readout-space.
         live_nec, intervened, layered = None, False, None
-        if live_ctx and config.MODELS[cl.model_key]["backend"] == "transformers":
+        if live_ctx and _live.supports_live(cl.model_key):
             try:
                 ln = intervene.live_necessity(
                     cl.model_key, live_ctx["images"], live_ctx["image_labels"], class_names,
@@ -172,8 +173,17 @@ def _render(c):
         "contrast_validation": {
             "pos": cs.pos, "neg": cs.neg, "n_pos": cs.n_pos, "n_neg": cs.n_neg,
             "heldout_auroc": round(cs.heldout_auroc, 3),
-            "intensity_collinearity": round(cs.intensity_collinearity, 3),
-            "valid": cs.valid, "warnings": list(cs.warnings)},
+            # intensity: report BOTH the cheap screen AND the controlled re-test
+            "intensity_screen_r": round(cs.intensity_collinearity, 3),
+            "intensity_suspect": cs.intensity_suspect,
+            "intensity_adjudication": cs.confound_adjudication,
+            "intensity_matched_auroc": (None if cs.matched_auroc != cs.matched_auroc
+                                        else round(cs.matched_auroc, 3)),
+            "intensity_matched_r": (None if cs.matched_intensity_collinearity
+                                    != cs.matched_intensity_collinearity
+                                    else round(cs.matched_intensity_collinearity, 3)),
+            "n_matched": cs.n_matched,
+            "valid": cs.valid, "warnings": list(cs.warnings), "flags": list(cs.flags)},
         "notes": sc.notes,
         # deterministic, instant — the auditable "why this score, why this verdict"
         "reasoning_trace": _trace.build_claim_trace(sc, cs, c.get("live"), c["confound"],
