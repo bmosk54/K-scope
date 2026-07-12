@@ -108,6 +108,7 @@
     hideTip();
     renderClaimStrip();
     renderHistology();
+    renderAblation();
     renderQuadrantSelection();
     renderNecessityChart();
     renderVerdict();
@@ -370,6 +371,241 @@
       `</div>`;
     const cap = document.getElementById("case-caption");
     if (cap) cap.textContent = "";
+  }
+
+  // ---------------------------------------------------------------- Ablation (inline amplify / subtract)
+  // Shows original vs after for the selected claim. After = same tile with difference
+  // highlights only (no dark veil, no cross-outs). Subtract = project concept out;
+  // Amplify = inject concept direction. Highlight strength scales with the slider.
+  let ablationMode = "subtract";
+  let ablationStrength = 0.85;
+
+  function ablationEmpty(el, msg) {
+    if (!el) return;
+    el.innerHTML = `<div class="ablation-empty">${msg}</div>`;
+  }
+
+  function paintAblationTile(el, hm, opts) {
+    opts = opts || {};
+    el.innerHTML = "";
+    if (!hm || !hm.tile) {
+      ablationEmpty(el, "No tile for this concept.");
+      return;
+    }
+    const S = hm.grid_side || (hm.z_grid || []).length || 14;
+    const CELL = 224 / S;
+    const zg = hm.z_grid || [];
+    const svg = d3.select(el).append("svg")
+      .attr("viewBox", "0 0 224 224")
+      .attr("preserveAspectRatio", "xMidYMid meet");
+
+    svg.append("image")
+      .attr("href", apiUrl(hm.tile)).attr("xlink:href", apiUrl(hm.tile))
+      .attr("x", 0).attr("y", 0).attr("width", 224).attr("height", 224);
+
+    if (!opts.highlight) return;
+
+    // Soft difference glow on the strongest concept-carrying patches — never a cross-out / veil.
+    const mode = opts.mode || "subtract";
+    const strength = Math.max(0, Math.min(1, opts.strength == null ? 1 : opts.strength));
+    const rgb = mode === "amplify" ? "18,149,158" : "194,74,56"; // teal boost / warm remove
+    const cells = [];
+    for (let r = 0; r < S; r++) {
+      for (let c = 0; c < S; c++) {
+        const z = (zg[r] && zg[r][c]) || 0;
+        if (z > 0) cells.push({ r, c, z });
+      }
+    }
+    cells.sort((a, b) => b.z - a.z);
+    const keep = Math.max(8, Math.ceil(cells.length * 0.18)); // top ~18% (min 8)
+    const top = cells.slice(0, keep);
+    const maxZ = top.length ? top[0].z : 1;
+    const g = svg.append("g").attr("class", "ablation-diff");
+    top.forEach((cell) => {
+      const mag = Math.min(1, cell.z / maxZ);
+      const op = (mode === "amplify" ? 0.5 : 0.38) * mag * strength;
+      g.append("rect")
+        .attr("x", cell.c * CELL + 0.8).attr("y", cell.r * CELL + 0.8)
+        .attr("width", CELL - 1.6).attr("height", CELL - 1.6)
+        .attr("rx", 1.5)
+        .attr("fill", `rgba(${rgb},${op})`)
+        .attr("stroke", `rgba(${rgb},${Math.min(0.95, 0.4 + 0.5 * mag * strength)})`)
+        .attr("stroke-width", 1.2 + mag * strength);
+    });
+  }
+
+  function ablationMathNote() {
+    const s = ablationStrength.toFixed(2);
+    if (ablationMode === "amplify") {
+      return `edit activation (not weights): <b>h′ = h + s·α·u</b> · s=${s} · u = unit concept axis · α = class-width`;
+    }
+    return `edit activation (not weights): <b>h′ = h − s·(h·u)·u</b> · s=${s} · u = unit concept axis`;
+  }
+
+  // Tile-level probe call along the claim's concept axis, scaled by strength.
+  // Before = the tile's actual call (stable across modes). After = post-edit call.
+  // Subtract: remove s of the concept component → margin falls by s·gap.
+  // Amplify: add s·gap along the axis → margin rises toward the concept class.
+  // Scope: THIS tile (NCT-CRC 224px) — not a whole-slide / MIL bag.
+  function ablationClassification(claim) {
+    const hm = claim && claim.concept && (window.HEATMAPS || {})[claim.concept];
+    const posL = (hm && hm.pos) || claim.pos || "POS";
+    const negL = (hm && hm.neg) || claim.neg || "NEG";
+
+    // Ground-truth / encoder class for the demo tile (Prompt pane). Stable "Before".
+    const tileClass = ((window._slide && window._slide.tile_class)
+      || (window.CARD && window.CARD.tile_class)
+      || "TUM").toUpperCase();
+
+    const curve = claim && claim.live_necessity && claim.live_necessity.curve;
+    const best = curve && curve.length
+      ? curve.reduce((a, b) => (Math.abs(b.gap || 0) > Math.abs(a.gap || 0) ? b : a), curve[0])
+      : { gap: 1.0, z: 0, layer: "readout" };
+    const gap = Math.abs(best.gap || 1.0);
+    const s = ablationStrength;
+
+    // Signed margin along this claim's axis: + toward posL, - toward negL.
+    // If the tile's native class is the concept (pos), start positive; else negative.
+    const baseMargin = (tileClass === posL) ? gap : (tileClass === negL ? -gap : gap * 0.5);
+    const beforeCall = tileClass;
+    let afterMargin, afterCall, note;
+
+    if (ablationMode === "subtract") {
+      // Project out the CONCEPT (pos) direction: shrinks the +pos component.
+      // h' = h - s (h·u) u  →  contribution of u scales by (1-s).
+      // Equivalent on the decision margin along u: m' = m - s·m_+ where m_+ = max(m,0)
+      // plus, if we were on the neg side, projecting out pos barely helps — keep simple:
+      // always remove s·gap of pos-support from the margin.
+      afterMargin = baseMargin - s * gap;
+      afterCall = afterMargin > 0.05 * gap ? posL : (afterMargin < -0.05 * gap ? negL : "UNDECIDED");
+      const flipped = afterCall !== beforeCall;
+      note = flipped
+        ? `Subtracting <b>${posL}</b> at s=${Math.round(s * 100)}% moves the tile call <b>${beforeCall}</b> → <b>${afterCall}</b>.`
+        : `Subtracting <b>${posL}</b> at s=${Math.round(s * 100)}% weakens the margin but the call stays <b>${beforeCall}</b>.`;
+    } else {
+      // Inject the concept direction: m' = m + s·gap
+      afterMargin = baseMargin + s * gap;
+      afterCall = afterMargin > 0.05 * gap ? posL : (afterMargin < -0.05 * gap ? negL : "UNDECIDED");
+      const flipped = afterCall !== beforeCall;
+      const flipRaw = claim.scores_raw && claim.scores_raw.sufficiency_flip;
+      const flipTxt = typeof flipRaw === "number" ? ` · battery flip rate ${flipRaw.toFixed(2)}` : "";
+      note = flipped
+        ? `Amplifying <b>${posL}</b> at s=${Math.round(s * 100)}% flips the tile <b>${beforeCall}</b> → <b>${afterCall}</b>${flipTxt}.`
+        : `Amplifying <b>${posL}</b> at s=${Math.round(s * 100)}% boosts the margin; call still <b>${beforeCall}</b>.`;
+    }
+
+    return {
+      beforeCall, afterCall,
+      flipped: afterCall !== beforeCall,
+      beforeMargin: baseMargin,
+      afterMargin,
+      note,
+      scope: "same tile before/after — only the latent edit changes",
+    };
+  }
+
+  function renderAblationClass(claim) {
+    const beforeEl = document.getElementById("ablation-call-before");
+    const afterEl = document.getElementById("ablation-call-after");
+    const mb = document.getElementById("ablation-margin-before");
+    const ma = document.getElementById("ablation-margin-after");
+    const note = document.getElementById("ablation-class-note");
+    const afterK = document.getElementById("ablation-after-k");
+    if (!beforeEl || !afterEl) return;
+    if (!claim) {
+      beforeEl.textContent = afterEl.textContent = "—";
+      if (mb) mb.textContent = "";
+      if (ma) ma.textContent = "";
+      if (note) note.textContent = "Certify a claim to see the tile classification shift.";
+      return;
+    }
+    const c = ablationClassification(claim);
+    beforeEl.textContent = c.beforeCall;
+    afterEl.textContent = c.afterCall;
+    afterEl.className = "ablation-class-call " + (c.flipped ? "is-flip" : "is-hold");
+    beforeEl.className = "ablation-class-call";
+    if (mb) mb.textContent = `margin ${c.beforeMargin >= 0 ? "+" : ""}${c.beforeMargin.toFixed(2)}`;
+    if (ma) ma.textContent = `margin ${c.afterMargin >= 0 ? "+" : ""}${c.afterMargin.toFixed(2)}`;
+    if (afterK) afterK.textContent = ablationMode === "amplify" ? "After amplify" : "After subtract";
+    if (note) note.innerHTML = c.note + ` <span style="opacity:.7">(${c.scope})</span>`;
+  }
+
+  function renderAblation() {
+    const before = document.getElementById("ablation-tile-before");
+    const after = document.getElementById("ablation-tile-after");
+    const lead = document.getElementById("ablation-lead");
+    const afterLab = document.getElementById("ablation-after-label");
+    const mathEl = document.getElementById("ablation-math");
+    const caption = document.getElementById("ablation-caption");
+    const strengthVal = document.getElementById("ablation-strength-val");
+    const subEl = document.getElementById("ablation-substrate");
+    if (!before || !after) return;
+
+    if (strengthVal) strengthVal.textContent = Math.round(ablationStrength * 100) + "%";
+    document.querySelectorAll(".ablation-mode").forEach((btn) => {
+      const on = btn.dataset.mode === ablationMode;
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    if (afterLab) afterLab.textContent = ablationMode === "amplify" ? "After amplify" : "After subtract";
+    if (mathEl) mathEl.innerHTML = ablationMathNote();
+
+    const claim = currentClaim();
+    renderAblationClass(claim);
+
+    if (!claim) {
+      ablationEmpty(before, "Certify a claim first.");
+      ablationEmpty(after, "");
+      if (lead) lead.textContent = "Run certify, then pick Subtract or Amplify to see how editing one concept feature moves the tile.";
+      if (caption) caption.textContent = "";
+      if (subEl) subEl.textContent = "substrate · —";
+      return;
+    }
+
+    const hm = claim.concept && (window.HEATMAPS || {})[claim.concept];
+    const conceptLabel = (claim.concept || "feature").replace(/_/g, " ");
+    if (subEl) {
+      const sub = (hm && hm.substrate) || claim.substrate || "h_optimus_0";
+      const model = (hm && hm.model) || "";
+      subEl.textContent = model ? `substrate · ${sub} · ${model}` : `substrate · ${sub}`;
+    }
+    if (lead) {
+      lead.textContent = ablationMode === "amplify"
+        ? `Amplify “${conceptLabel}” — add the concept direction into the embedding; highlights show which patches would strengthen.`
+        : `Subtract “${conceptLabel}” — project that direction out of the embedding; highlights show which patches lose support.`;
+    }
+
+    if (!hm) {
+      ablationEmpty(before, "No per-patch map for this claim.");
+      ablationEmpty(after, "Nothing to highlight.");
+      if (caption) caption.textContent = "This claim has no measured patch map on the wired substrate.";
+      return;
+    }
+
+    paintAblationTile(before, hm, { highlight: false });
+    paintAblationTile(after, hm, { highlight: true, mode: ablationMode, strength: ablationStrength });
+    if (caption) {
+      caption.innerHTML =
+        `<b>${claim.claim}</b> — H0 demo tile (same as Prompt). Right: patches along ` +
+        `<b>${hm.pos} vs ${hm.neg}</b> outlined only. ` +
+        `Strength scales the latent edit on the embedding vector; the model weights stay frozen.`;
+    }
+  }
+
+  function initAblationControls() {
+    document.querySelectorAll(".ablation-mode").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        ablationMode = btn.dataset.mode === "amplify" ? "amplify" : "subtract";
+        renderAblation();
+      });
+    });
+    const slider = document.getElementById("ablation-strength");
+    if (slider) {
+      slider.addEventListener("input", () => {
+        ablationStrength = Number(slider.value) / 100;
+        renderAblation();
+      });
+    }
   }
 
   // ---------------------------------------------------------------- proof: quadrant map
@@ -1000,6 +1236,7 @@
   const VIEW_META = {
     prompt: { title: "Prompt", tag: "input slide → K-Pro answer → certify" },
     case: { title: "Case", tag: "one claim, followed pixel to concept axis" },
+    ablation: { title: "Ablation", tag: "subtract or amplify one concept feature — difference highlights only" },
     proof: { title: "Proof", tag: "necessity × sufficiency × specificity, and where the axis came from" },
     verdict: { title: "Verdict", tag: "certified claim, confound check, honest coverage" },
     research: { title: "AutoResearch", tag: "autonomous causal-circuit discovery — probe · certify · locate · ablate · reflect" },
@@ -1019,6 +1256,7 @@
       document.getElementById("topbar-tag").textContent = meta.tag;
     }
     if (id === "proof") { renderAnswerFlow(); renderQuadrant(); renderQuadrantSelection(); renderNecessityChart(); }
+    if (id === "ablation") renderAblation();
     if (id === "gallery") setTimeout(fitGalleryFrame, 60);   // lazy iframe: size after it paints
   }
 
@@ -1086,6 +1324,7 @@
     renderPromptTrace();
     renderClaimStrip();
     renderHistology();
+    renderAblation();
     renderAnswerFlow();
     renderQuadrant();
     renderNecessityChart();
@@ -1131,7 +1370,10 @@
       const r = await fetch(apiUrl("heatmaps/heatmaps.json"), { headers: { Accept: "application/json" } });
       if (!r.ok) return;
       window.HEATMAPS = await r.json();
-      if (!document.body.classList.contains("no-card")) renderHistology();
+      if (!document.body.classList.contains("no-card")) {
+        renderHistology();
+        renderAblation();
+      }
     } catch (e) { /* no heatmaps -> renderNoMap fallback */ }
   }
 
@@ -1282,10 +1524,22 @@
 
     $c("c-certify").addEventListener("click", runCertify);
 
-    // MCP verb chips -> raw verb output in the console tray
+    // MCP verb chips -> raw verb output in the console tray.
+    // steer/ablate also jump to the inline Ablation view (amplify / subtract) — no separate page.
     document.querySelectorAll(".verbchips button[data-verb]").forEach((b) => {
       b.addEventListener("click", async () => {
-        const verb = b.dataset.verb; b.disabled = true; setStatus(verb + "…");
+        const verb = b.dataset.verb;
+        const mode = b.dataset.ablationMode;
+        if (mode === "amplify" || mode === "subtract") {
+          ablationMode = mode;
+          const slider = document.getElementById("ablation-strength");
+          if (slider) ablationStrength = Number(slider.value) / 100;
+          if (!document.body.classList.contains("no-card")) {
+            goToView("ablation");
+            renderAblation();
+          }
+        }
+        b.disabled = true; setStatus(verb + "…");
         try {
           const r = await fetch(apiUrl("api/verb/" + verb), {
             method: "POST", headers: { "Content-Type": "application/json" },
@@ -1300,14 +1554,32 @@
   }
 
   // ---------------------------------------------------------------- init
-  function init() {
-    // Start BLANK: the evidence card is empty until the user submits + certifies.
-    document.body.classList.add("no-card");
-    setLiveBadge(false);
+  async function seedCard() {
+    // Prefer a precomputed live card (no GPU at runtime); fall back to data.js mock.
+    try {
+      const r = await fetch(apiUrl("live_card.json"), { headers: { Accept: "application/json" } });
+      if (r.ok) {
+        const d = await r.json();
+        if (d && d.claims && d.claims.length) {
+          window.CARD = d;
+          recomputeState();
+          setLiveBadge(true);
+          return "live_card";
+        }
+      }
+    } catch (e) { /* fall through */ }
+    if (window.CARD && window.CARD.claims && window.CARD.claims.length) {
+      recomputeState();
+      setLiveBadge(false);
+      return "mock";
+    }
+    return null;
+  }
 
+  function init() {
     initNavigation();
     initConsole();
-    loadHeatmaps();
+    initAblationControls();
 
     document.getElementById("claim-prev").addEventListener("click", () => selectClaim(selectedIdx - 1));
     document.getElementById("claim-next").addEventListener("click", () => selectClaim(selectedIdx + 1));
@@ -1317,7 +1589,20 @@
     // restore the last-viewed tab across reloads (fall back to Prompt if none / unknown)
     let savedView = null;
     try { savedView = localStorage.getItem("kscope:view"); } catch (e) {}
-    goToView(savedView && document.getElementById("view-" + savedView) ? savedView : "prompt");
+
+    // Seed an evidence card so Case / Ablation / Proof / Verdict are browsable without
+    // a live certify backend. Run certify still replaces this with a fresh card when available.
+    seedCard().then((src) => {
+      if (src) {
+        document.body.classList.remove("no-card");
+        loadHeatmaps().then(() => { renderAll(); });
+      } else {
+        document.body.classList.add("no-card");
+        setLiveBadge(false);
+        loadHeatmaps();
+      }
+      goToView(savedView && document.getElementById("view-" + savedView) ? savedView : "prompt");
+    });
 
     // re-fit the gallery iframe whenever it (re)loads — initial load, or an in-gallery
     // source/axis switch that navigates it to a sibling gallery file.
@@ -1327,6 +1612,7 @@
     let _gfRz;
     window.addEventListener("resize", () => {
       renderHistology();
+      if (document.getElementById("view-ablation") && document.getElementById("view-ablation").classList.contains("active")) renderAblation();
       clearTimeout(_gfRz); _gfRz = setTimeout(fitGalleryFrame, 120);  // frame height tracks width
       if (document.getElementById("view-proof").classList.contains("active")) {
         renderAnswerFlow();

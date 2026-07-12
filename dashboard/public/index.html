@@ -27,10 +27,11 @@
     <div class="nav-list">
       <div class="nav-item" data-view="prompt"><span class="nav-idx">01</span><span>Prompt</span></div>
       <div class="nav-item" data-view="case"><span class="nav-idx">02</span><span>Case</span></div>
-      <div class="nav-item" data-view="proof"><span class="nav-idx">03</span><span>Proof</span></div>
-      <div class="nav-item" data-view="verdict"><span class="nav-idx">04</span><span>Verdict</span></div>
-      <div class="nav-item" data-view="research"><span class="nav-idx">05</span><span>AutoResearch</span></div>
-      <div class="nav-item" data-view="gallery"><span class="nav-idx">06</span><span>Slide Gallery</span></div>
+      <div class="nav-item" data-view="ablation"><span class="nav-idx">03</span><span>Ablation</span></div>
+      <div class="nav-item" data-view="proof"><span class="nav-idx">04</span><span>Proof</span></div>
+      <div class="nav-item" data-view="verdict"><span class="nav-idx">05</span><span>Verdict</span></div>
+      <div class="nav-item" data-view="research"><span class="nav-idx">06</span><span>AutoResearch</span></div>
+      <div class="nav-item" data-view="gallery"><span class="nav-idx">07</span><span>Slide Gallery</span></div>
     </div>
 
     <div class="sidebar-foot">
@@ -78,8 +79,8 @@
             <label class="dimlabel"><input type="checkbox" id="c-bedrock" checked> Bedrock decompose</label>
             <button id="c-certify">Run certify →</button>
             <div class="verbchips">
-              <button class="chip" data-verb="steer">steer</button>
-              <button class="chip" data-verb="ablate">ablate</button>
+              <button class="chip" data-verb="steer" data-ablation-mode="amplify">steer</button>
+              <button class="chip" data-verb="ablate" data-ablation-mode="subtract">ablate</button>
               <button class="chip" data-verb="design">design</button>
               <button class="chip" data-verb="specificity">specificity</button>
               <button class="chip" data-verb="confound">confound</button>
@@ -130,6 +131,55 @@
               <div id="readout-live"></div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- ========================================================= ABLATION -->
+      <div class="view" id="view-ablation">
+        <div class="ablation-shell">
+          <div class="ablation-modes" role="tablist" aria-label="Intervention mode">
+            <button type="button" class="ablation-mode is-active" data-mode="subtract" role="tab" aria-selected="true">Subtract</button>
+            <button type="button" class="ablation-mode" data-mode="amplify" role="tab" aria-selected="false">Amplify</button>
+          </div>
+          <div class="ablation-lead" id="ablation-lead">Project a concept feature out of the tile — or inject it — and see which patches move.</div>
+          <div class="ablation-substrate" id="ablation-substrate">substrate · h_optimus_0</div>
+
+          <div class="ablation-compare">
+            <div class="ablation-pane">
+              <div class="ablation-pane-label">Original</div>
+              <div class="ablation-tile" id="ablation-tile-before"></div>
+            </div>
+            <div class="ablation-pane">
+              <div class="ablation-pane-label" id="ablation-after-label">After subtract</div>
+              <div class="ablation-tile" id="ablation-tile-after"></div>
+            </div>
+          </div>
+
+          <div class="ablation-controls">
+            <label class="ablation-strength" for="ablation-strength">
+              <span>strength s</span>
+              <input type="range" id="ablation-strength" min="0" max="100" value="85" />
+              <span class="ablation-strength-val" id="ablation-strength-val">85%</span>
+            </label>
+            <div class="ablation-math" id="ablation-math">—</div>
+          </div>
+
+          <div class="ablation-class" id="ablation-class">
+            <div class="ablation-class-col">
+              <div class="ablation-class-k">Before</div>
+              <div class="ablation-class-call" id="ablation-call-before">—</div>
+              <div class="ablation-class-margin" id="ablation-margin-before">—</div>
+            </div>
+            <div class="ablation-class-arrow" aria-hidden="true">→</div>
+            <div class="ablation-class-col">
+              <div class="ablation-class-k" id="ablation-after-k">After</div>
+              <div class="ablation-class-call" id="ablation-call-after">—</div>
+              <div class="ablation-class-margin" id="ablation-margin-after">—</div>
+            </div>
+            <div class="ablation-class-note" id="ablation-class-note">—</div>
+          </div>
+
+          <div class="ablation-caption" id="ablation-caption">—</div>
         </div>
       </div>
 

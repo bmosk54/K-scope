@@ -319,6 +319,102 @@ a.nav-item.nav-link { color: var(--text-dim); text-decoration: none; }
 .hm-nomap-title { font-size: 14px; color: var(--text); }
 .hm-nomap-sub { font-size: 12px; color: var(--text-faint); max-width: 380px; line-height: 1.5; }
 
+/* ---- Ablation: amplify / subtract, inline, difference highlights only ---- */
+.ablation-shell { max-width: 920px; }
+.ablation-modes {
+  display: inline-flex; gap: 2px; padding: 3px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+  margin-bottom: 10px;
+}
+.ablation-mode {
+  border: none; background: transparent; color: var(--text-dim);
+  font: inherit; font-size: 13px; font-weight: 600;
+  padding: 7px 16px; border-radius: 6px; cursor: pointer;
+}
+.ablation-mode:hover { color: var(--text); }
+.ablation-mode.is-active {
+  background: var(--panel); color: var(--text);
+  box-shadow: 0 0 0 1px var(--border);
+}
+.ablation-lead {
+  font-size: 13px; color: var(--text-dim); margin-bottom: 6px; max-width: 62ch; line-height: 1.45;
+}
+.ablation-substrate {
+  font-family: var(--mono); font-size: 11px; color: var(--text-faint); margin-bottom: 16px;
+}
+.ablation-compare {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;
+}
+@media (max-width: 820px) {
+  .ablation-compare { grid-template-columns: 1fr; }
+}
+.ablation-pane-label {
+  font-size: 11px; font-weight: 650; letter-spacing: 0.3px; text-transform: uppercase;
+  color: var(--text-faint); margin-bottom: 8px;
+}
+.ablation-tile {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden; aspect-ratio: 1 / 1; max-width: 420px;
+}
+.ablation-tile svg { width: 100%; height: 100%; display: block; }
+.ablation-controls {
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px 24px;
+  margin-bottom: 12px; padding: 12px 14px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+}
+.ablation-strength {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12px; color: var(--text-dim); font-family: var(--mono);
+}
+.ablation-strength input[type="range"] {
+  width: 160px; accent-color: var(--accent);
+}
+.ablation-strength-val { min-width: 36px; color: var(--text); font-weight: 600; }
+.ablation-math {
+  font-size: 12px; color: var(--text-dim); line-height: 1.45; flex: 1; min-width: 240px;
+  font-family: var(--mono);
+}
+.ablation-math b { color: var(--text); font-weight: 650; }
+.ablation-class {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 10px 16px;
+  align-items: center;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+}
+.ablation-class-col { text-align: center; }
+.ablation-class-k {
+  font-size: 10.5px; font-weight: 650; letter-spacing: 0.3px; text-transform: uppercase;
+  color: var(--text-faint); margin-bottom: 6px;
+}
+.ablation-class-call {
+  font-size: 22px; font-weight: 700; letter-spacing: 0.02em; color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.ablation-class-call.is-flip { color: var(--accent); }
+.ablation-class-call.is-hold { color: var(--text-dim); }
+.ablation-class-margin {
+  margin-top: 4px; font-family: var(--mono); font-size: 11.5px; color: var(--text-faint);
+}
+.ablation-class-arrow {
+  font-size: 22px; color: var(--text-faint); padding-top: 12px;
+}
+.ablation-class-note {
+  grid-column: 1 / -1;
+  font-size: 12px; color: var(--text-dim); line-height: 1.45;
+  border-top: 1px solid var(--border); padding-top: 10px; margin-top: 2px;
+}
+.ablation-caption {
+  font-size: 12px; color: var(--text-faint); line-height: 1.5; max-width: 72ch;
+}
+.ablation-caption b { color: var(--text); }
+.ablation-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; min-height: 280px; padding: 24px; text-align: center; color: var(--text-faint);
+}
+
 .readout-panel {
   background: var(--panel);
   border: 1px solid var(--border);
