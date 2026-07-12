@@ -212,10 +212,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
   /* dashed unit boxes drawn on the stage view: subtle scale markers for the ranked unit.
      Centered on the crop (the crop is centered on the ranked patch/tile); sized in JS. */
   .stage-imgwrap { position: relative; display: block; width: 100%; }
+  /* dashed marker for the ranked unit, sized in JS. High-contrast so it reads on any H&E:
+     a bright accent dash sandwiched between a dark and a light 1px outline. */
   .unit-box { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-    pointer-events: none; box-sizing: border-box; border-radius: 3px;
-    border: 1.5px dashed color-mix(in srgb, var(--accent) 48%, transparent); }
-  .unit-box.emph { border-width: 2px; border-color: color-mix(in srgb, var(--accent) 90%, transparent); }
+    pointer-events: none; box-sizing: border-box; border-radius: 2px; min-width: 6px; min-height: 6px;
+    border: 2px dashed var(--accent);
+    box-shadow: 0 0 0 1px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.6); }
 
   /* three regions: thumb rail · stage · aside */
   .layout { display: grid; gap: 20px; margin-top: 16px;
@@ -475,7 +477,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     document.getElementById('md-desc').textContent = p.desc;
     document.getElementById('md-center').textContent = `${p.cx}, ${p.cy}`;
     document.getElementById('md-origin').textContent = `${p.ox}, ${p.oy}`;
-    document.getElementById('md-size').textContent = `${p.w} px`;         // the view (context crop)
+    document.getElementById('md-size').textContent = `${p.w} × ${p.h} px · level 0`;  // the view crop
     // the ranked unit: a 14×14 patch token (224px-tile footprint / 16) or the whole 224×224 tile.
     if (MPP > 0) {
       const tilePx = Math.round(224 * Math.max(0.5 / MPP, 1)), tokPx = Math.round(tilePx / 16);
@@ -587,12 +589,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
     if (!(MPP > 0) || !boxTile) return;
     view = view || (PATCHES.length ? PATCHES[active].w : 1536);
     const tilePx = Math.round(224 * Math.max(0.5 / MPP, 1)), tokPx = Math.round(tilePx / 16);
+    // ONE box, sized to the SELECTED unit so toggling visibly changes it: a whole 224×224 tile
+    // (~30% of the view) vs a single 14×14 patch (~2% — deliberately tiny, that's the true scale).
+    const px = unit === 'tile' ? tilePx : tokPx;
     boxTile.hidden = false;
-    boxTile.style.width = boxTile.style.height = (100 * tilePx / view).toFixed(2) + '%';
-    boxTile.classList.toggle('emph', unit === 'tile');
-    boxPatch.hidden = unit !== 'patch';
-    boxPatch.style.width = boxPatch.style.height = (100 * tokPx / view).toFixed(2) + '%';
-    boxPatch.classList.toggle('emph', unit === 'patch');
+    boxTile.style.width = boxTile.style.height = (100 * px / view).toFixed(2) + '%';
+    boxPatch.hidden = true;
   }
 
   function setEnd(which) {
