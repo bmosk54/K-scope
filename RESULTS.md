@@ -556,8 +556,16 @@ infiltrate"* → `necessity_mode = live source-intervention`, `intervened_on_inp
 clean** — same code path (dispatches to `LiveEncoder`), TUM-vs-LYM curve unchanged
 (early n.s. → readout +2.9).
 
-**Caveats.** (1) The `h0` track still *ships* pointed at `h0_mini` (gated-manual, no
-embeddings) — flip `H0_MODEL_KEY` to `h_optimus_0` (or inject a runtime track) to run today;
-`h0_mini` is also timm, so `TimmLiveEncoder` covers it unchanged once its weights + a
-multi-layer npz are available. (2) H-optimus-0 is ~5× slower than phikon (ViT-g), so the
-live sweep costs proportionally more per claim.
+**h0 track flipped + tested.** `H0_MODEL_KEY` is now `h_optimus_0` (was `h0_mini`, which is
+approval-gated / not accessible here). The `h0` track resolves natively — verified:
+`certify(track="h0")` cached conf **0.974** (TUM_vs_NORM); `certify_answer(track="h0")` live
+→ `intervened_on_input=true`, **2/2 GROUNDED** with timm live curves. `h0_mini` is also timm,
+so `TimmLiveEncoder` covers it unchanged once its weights + a multi-layer npz land (restore
+the key then).
+
+**Caveats.** (1) The HistoPLUS **cell-type** substrate is a *separate* use of `h0_mini` and
+was left as-is: `embeddings/histoplus_celltype/h0_mini/train.npz` exists (built via the
+HistoPLUS-bundled H0-mini backbone), so cell-type certification reads it from cache and does
+**not** need the gated standalone model — repointing it to `h_optimus_0` would break it (no
+cell-type npz there; 1536-d vs 768-d). (2) H-optimus-0 is ~5× slower than phikon (ViT-g), so
+the live sweep costs proportionally more per claim.

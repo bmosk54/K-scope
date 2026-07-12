@@ -72,11 +72,16 @@ def certify_answer(prompt, answer, track="phikon", split="train", n_null=200,
         live_nec, intervened, layered = None, False, None
         if live_ctx and _live.supports_live(cl.model_key):
             try:
+                # Reuse the resident/warm encoder — never cold-load weights per call.
+                enc = live_ctx.get("encoder")
+                if enc is None:
+                    from .. import serving as _serving
+                    enc = _serving.warm_encoder(cl.model_key)
                 ln = intervene.live_necessity(
                     cl.model_key, live_ctx["images"], live_ctx["image_labels"], class_names,
                     pos=spec.pos, neg=spec.neg, ref_images=live_ctx["ref_images"],
                     ref_labels=live_ctx["ref_labels"], n_null=live_ctx.get("n_null", 12),
-                    encoder=live_ctx.get("encoder"), artifacts_dir=artifacts_dir)
+                    encoder=enc, artifacts_dir=artifacts_dir)
                 if ln.get("status") == "live_source_intervention":
                     live_nec, intervened, any_live = ln, True, True
                 else:

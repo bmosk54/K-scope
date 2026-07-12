@@ -33,15 +33,19 @@ def project_out(direction):
 class LiveEncoder:
     """Frozen transformers ViT with an ablation hook. phikon-family (Dinov2) only."""
 
-    def __init__(self, model_key="phikon_v2"):
+    def __init__(self, model_key="phikon_v2", local_files_only=False):
         spec = config.MODELS[model_key]
         if spec["backend"] != "transformers":
             raise NotImplementedError(
                 f"live hook implemented for transformers ViT (phikon); {model_key} is "
                 f"{spec['backend']} — timm live hooks are a follow-on.")
         from transformers import AutoImageProcessor, AutoModel
-        self.processor = AutoImageProcessor.from_pretrained(spec["hf_id"], use_fast=True)
-        self.model = AutoModel.from_pretrained(spec["hf_id"]).to(DEVICE).eval()
+        # local_files_only=True -> load purely from the HF cache, zero network (no
+        # re-download, not even a metadata HEAD). Non-sticky, unlike HF_HUB_OFFLINE.
+        self.processor = AutoImageProcessor.from_pretrained(
+            spec["hf_id"], use_fast=True, local_files_only=local_files_only)
+        self.model = AutoModel.from_pretrained(
+            spec["hf_id"], local_files_only=local_files_only).to(DEVICE).eval()
         self.blocks = self.model.encoder.layer
         self.dim = spec["dim"]
         self.n_blocks = len(self.blocks)
@@ -180,12 +184,13 @@ def supports_live(model_key):
     return config.MODELS[model_key]["backend"] in ("transformers", "timm")
 
 
-def make_live_encoder(model_key="phikon_v2"):
+def make_live_encoder(model_key="phikon_v2", local_files_only=False):
     """Backend-dispatched live encoder: Dinov2/transformers -> LiveEncoder, timm ViT
-    (H-optimus / H0-mini) -> TimmLiveEncoder."""
+    (H-optimus / H0-mini) -> TimmLiveEncoder. `local_files_only` (transformers) loads
+    purely from the HF cache with no network call."""
     backend = config.MODELS[model_key]["backend"]
     if backend == "transformers":
-        return LiveEncoder(model_key)
+        return LiveEncoder(model_key, local_files_only=local_files_only)
     if backend == "timm":
         return TimmLiveEncoder(model_key)
     raise NotImplementedError(f"no live encoder for backend {backend!r} ({model_key})")

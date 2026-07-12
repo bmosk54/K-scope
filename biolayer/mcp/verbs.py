@@ -36,6 +36,21 @@ def certify_answer(prompt, answer, track="phikon", split="train", n_null=200,
                            live_ctx=live_ctx, explain=explain)
 
 
+def warmup(model="phikon_v2"):
+    """Prime the warm inference backend: load the frozen encoder + reference set +
+    population embeddings ONCE so live certification is served hot (no per-call weight
+    reload or re-download). Call at server startup."""
+    from .. import serving
+    return serving.warmup(model)
+
+
+def serving_status():
+    """What the warm backend currently holds resident (encoders, reference sets, RAM
+    embeddings)."""
+    from .. import serving
+    return serving.status()
+
+
 def _resolve(track, model, pos, neg):
     """A track name fills in model + concept + distractor; else use the args."""
     if track is not None:

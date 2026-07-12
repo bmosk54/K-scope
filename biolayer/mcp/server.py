@@ -36,6 +36,21 @@ def hypothesis(track: str = "phikon", split: str = "train") -> dict:
 
 
 @mcp.tool()
+def warmup(model: str = "phikon_v2") -> dict:
+    """Prime the warm inference backend — load the frozen encoder + reference set +
+    population embeddings ONCE so live certification is served hot from this process (no
+    per-call weight reload or re-download). Call at startup before live certify calls."""
+    return verbs.warmup(model)
+
+
+@mcp.tool()
+def serving_status() -> dict:
+    """Report what the warm inference backend holds resident (encoders, reference sets,
+    in-RAM embeddings)."""
+    return verbs.serving_status()
+
+
+@mcp.tool()
 def certify_answer(prompt: str, answer: str, track: str = "phikon",
                    split: str = "train", n_null: int = 200, fast: bool = False,
                    explain: bool = False) -> dict:
