@@ -28,6 +28,40 @@ from . import trace as _trace
 SCHEMA_VERSION = "dyn-0.2"
 CAVEAT = ("Certifies model-internal causal use of an answer's concept claims in the "
           "encoder's representation — NOT biological/clinical validity.")
+
+# The single most important honesty statement on the card: WHICH question it answers.
+CONCEPT_LEVEL_CLAIM = (
+    "CONCEPT-LEVEL: the concepts the answer invokes are ones this encoder genuinely "
+    "represents, uses causally, and that are not staining/batch artifacts. This is NOT a "
+    "per-slide / per-prediction claim — it does NOT verify the concept is present in any "
+    "specific input tile, and in the default (no live_ctx) mode it CANNOT catch a "
+    "per-slide hallucination such as 'tumor' asserted about a stroma tile.")
+SLIDE_LEVEL_CLAIM = (
+    "SLIDE-LEVEL (live source-intervention): necessity was measured by editing THIS "
+    "slide's real forward pass (intervened_on_input=true) — a per-slide causal read of "
+    "whether the readout depends on the concept axis.")
+
+
+def _scope(any_live):
+    """The card's explicit self-description: which of the three distinct questions it
+    answers, so the framing never outruns the evidence."""
+    return {
+        "level": "slide-level (live) + concept-level" if any_live else "concept-level",
+        "concept_level_claim": CONCEPT_LEVEL_CLAIM,
+        "slide_level_claim": (SLIDE_LEVEL_CLAIM if any_live else
+            "NOT RUN — no live_ctx provided. Pass live_ctx (this slide's tiles + a "
+            "reference set) for the per-slide, input-dependent necessity test."),
+        "questions": {
+            "is the concept real/causal/unconfounded in the model?":
+                "YES — this is what the concept-level card certifies",
+            "does K-Pro's answer for THIS slide use the concept?":
+                "not determinable here — no K-Pro internals",
+            "is the concept present in THIS tile?":
+                ("tested live per-slide (see slide_level_claim)" if any_live else
+                 "NOT tested in concept-level mode"),
+        },
+    }
+
 # Both assumptions printed on the card, not buried.
 ASSUMPTIONS = [
     "encoder-faithfulness: a latent do() moves the model's REPRESENTATION, not tissue "
@@ -122,6 +156,8 @@ def certify_answer(prompt, answer, track="phikon", split="train", n_null=200,
         "prompt": prompt, "answer": answer,
         "track": t.name, "preferred_substrate": t.model_key, "split": split,
         "coverage": coverage,
+        # WHICH question this card answers — concept-level unless a slide was intervened on.
+        "certification_scope": _scope(any_live),
         "concept_vocabulary": _concepts.coverage_summary(t.model_key, split),
         "claims": [_render(c) for c in certified],
         "not_certifiable": skipped,

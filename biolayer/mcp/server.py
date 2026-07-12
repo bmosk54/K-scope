@@ -147,8 +147,28 @@ def attribution(model: str = "phikon_v2", split: str = "train",
 @mcp.tool()
 def ablate(model: str = "phikon_v2", split: str = "train",
            pos: str = "TUM", neg: str = "LYM", n_null: int = 200) -> dict:
-    """Necessity (readout space) with a matched-random null."""
+    """Necessity (readout space) with a matched-random null. CONCEPT-LEVEL (reference set,
+    input-independent). For the per-slide read use `ablate_live`."""
     return verbs.ablate(model, split, pos, neg, n_null)
+
+
+@mcp.tool()
+def ablate_live(images: list, image_labels: list, model: str = "phikon_v2",
+                split: str = "train", pos: str = "TUM", neg: str = "LYM",
+                readout_pos: str = None, readout_neg: str = None,
+                ref_images: list = None, ref_labels: list = None,
+                n_null: int = 20) -> dict:
+    """SLIDE-LEVEL necessity — edit THIS slide's REAL forward pass and measure whether the
+    readout depends on the concept axis vs a matched-random null (intervened_on_input=true).
+
+    The input-dependent counterpart to `ablate`: the mode that can catch a per-slide
+    hallucination. `images`/`ref_images` are tile FILE PATHS; `image_labels`/`ref_labels`
+    are class-code strings (e.g. "TUM","NORM"). Set `readout_pos`/`readout_neg` to score a
+    different concept than the one ablated (ablate-A-score-B cross-interference).
+    """
+    return verbs.ablate_live(images, image_labels, model=model, split=split, pos=pos,
+                             neg=neg, readout_pos=readout_pos, readout_neg=readout_neg,
+                             ref_images=ref_images, ref_labels=ref_labels, n_null=n_null)
 
 
 @mcp.tool()

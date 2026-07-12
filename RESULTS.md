@@ -569,3 +569,50 @@ HistoPLUS-bundled H0-mini backbone), so cell-type certification reads it from ca
 **not** need the gated standalone model — repointing it to `h_optimus_0` would break it (no
 cell-type npz there; 1536-d vs 768-d). (2) H-optimus-0 is ~5× slower than phikon (ViT-g), so
 the live sweep costs proportionally more per claim.
+
+---
+
+# Scope honesty: concept-level vs slide-level + a passing negative control (2026-07-12)
+
+The default certificate answers a **model-property** question (is concept C a real, causal,
+unconfounded axis in the encoder?) over the **reference embedding set** — it never looks at
+the query slide. That is rigorous for *that* claim, but the "per-prediction card" framing
+implied a per-slide claim it does not make: **default certify would call "tumor" GROUNDED
+even on an all-stroma tile**, because it never checks the tile. Fixed by relabeling, not
+rebuilding — every strong result survives intact; only the overclaim is dropped.
+
+## Fix 1 — the card states which of three questions it answers (`certification_scope`)
+Every `certify_answer` card now carries an explicit scope block:
+- **Q: is the concept real/causal/unconfounded in the model?** → YES (concept-level — this card)
+- **Q: does K-Pro's answer for THIS slide use the concept?** → not determinable (no K-Pro internals)
+- **Q: is the concept present in THIS tile?** → NOT tested in concept-level mode; tested live if `live_ctx` given
+
+Default `level` = `"concept-level"`; it flips to `"slide-level (live) + concept-level"` only
+when a slide was intervened on. The sharpened caveat says concept-level ≠ per-slide in words.
+
+## Fix 2 — the slide-level path is now a first-class verb (`ablate_live`)
+`intervene.live_necessity` (edit THIS slide's real forward pass) was reachable only inside
+`certify_answer`'s `live_ctx`. Added MCP verb **`ablate_live`** (+ `verbs.ablate_live`):
+takes tile file-paths + class-code labels, hooks the block, projects the concept axis out of
+the CLS in the residual stream, propagates, and reports the per-layer necessity vs a
+matched-random null. `ablate` is now labeled concept-level; `ablate_live` is slide-level.
+
+## Fix 3 — the negative control (the falsifier, finally run)
+Input "slide" = **13 tumor tiles**. On their real forward pass we ablate a concept axis and
+watch the TUM readout margin (Phikon-v2, matched-random null n=20):
+
+| claim | ablated axis | mid_early gap (z) | mid gap (z) | readout drop | ablated margin | verdict |
+|---|---|---|---|---|---|---|
+| **TRUE** (tumor) | TUM vs NORM | +0.34 (28) | +2.25 (71) | 8.58 = **158%** of base | 5.44 → **−3.14** | **COLLAPSES** — readout causally uses tumor |
+| **FALSE** (adipose) | ADI vs NORM | −0.08 (−7) | −0.04 (−1) | 1.08 = **20%** of base | 5.44 → **+4.36** | **dents only** — readout does NOT use adipose |
+
+**The live path distinguishes a claim the tile causally uses from one it doesn't.** Ablating
+the tumor axis **collapses** the tumor readout (margin flips negative → the tile stops reading
+as tumor); ablating the adipose axis is **inert at mid-layers** (negative gap) and only dents
+the readout by 20% at the final block — a shared-`NORM`-foil cross-interference, not causal use.
+So a K-Pro claim of "abundant adipose" on a tumor tile finds **no per-slide causal support**.
+
+The honest discriminator is **magnitude / margin-flip**, not a binary "bite": both concepts
+show *some* readout effect (the adipose axis shares the NORM foil), but only the true concept
+removes enough to flip the readout. This is a genuine per-slide result — the thing the
+concept-level card cannot give — and it's now the demo's negative control. Script: `neg_control.py`.
