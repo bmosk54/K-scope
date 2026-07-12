@@ -131,7 +131,26 @@ body {
   padding: 22px 16px;
 }
 
-.brand { display: flex; align-items: center; gap: 10px; margin-bottom: 30px; }
+.brand {
+  display: flex;
+  align-items: center;
+  margin: 2px 0 26px;
+}
+.brand-logo {
+  display: block;
+  width: 100%;
+  max-width: 164px;
+  height: auto;
+  object-fit: contain;
+  object-position: left center;
+}
+.brand-logo--dark { display: none; }
+html[data-theme="dark"] .brand-logo--light { display: none; }
+html[data-theme="dark"] .brand-logo--dark { display: block; }
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .brand-logo--light { display: none; }
+  html:not([data-theme="light"]) .brand-logo--dark { display: block; }
+}
 .brand-mark {
   width: 30px; height: 30px;
   border: none;
