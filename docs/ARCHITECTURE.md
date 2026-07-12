@@ -96,9 +96,13 @@ bandwidth to non-AWS hosts (GDC/GCS stall at ~0 MB/s), while AWS↔AWS and AWS�
 ```
 
 Both come out as **ordered, rerankable** `OrderedVectorList`s ([`biolayer/vectors`](../biolayer/vectors)):
-vectors + row-aligned metadata + a mutable `order`, so a future mech-interp scoring pass calls
-`rerank(scores)` to permute only the order — the (potentially tens-of-GB) PATCH list stays on
-its per-slide memmap shards and only the top-k rows a rerank touches are gathered.
+vectors + row-aligned metadata + a mutable `order`, so a scoring pass calls `rerank(scores)` to
+permute only the order — the (potentially tens-of-GB) PATCH list stays on its per-slide memmap
+shards and only the top-k rows a rerank touches are gathered. The concrete scorer wired in today
+is the **certified concept-axis dot-product** ([`causal/rank.py`](../biolayer/causal/rank.py)):
+`rerank_by_concept(list, "TUM", "LYM")` fits a gated axis on the H-optimus-0 NCT-CRC reference
+(held-out AUROC + intensity control) and ranks each tile/patch by `standardize(vec)·direction` —
+so the ranking is refused or flagged if the axis rides staining intensity rather than biology.
 
 The reader is **format-agnostic** (OpenSlide primary, tifffile fallback) so `.svs` and
 `.tiff` never branch; the filter stage is a first-class registry applied inline or
@@ -159,6 +163,7 @@ Every tile is embedded at **3 depths** × **{global CLS, local mean-patch}**. Da
 | [`biolayer/data/s3_utils.py`](../biolayer/data/s3_utils.py) | Shared S3 artifact channel |
 | [`biolayer/data/wsi_ingest.py`](../biolayer/data/wsi_ingest.py) | Idempotent slide ingest → S3 (GDC UUID or any URL) |
 | [`biolayer/vectors/ordered_list.py`](../biolayer/vectors/ordered_list.py) | The two ordered, rerankable lists (GLOBAL/CLS + PATCH); sharded memmap backing + `rerank()` |
+| [`biolayer/vectors/rerank.py`](../biolayer/vectors/rerank.py) | Wires the certified concept-axis dot-product ranker (`causal/rank.py`) into both lists; chunked over PATCH shards |
 | [`biolayer/data/wsi_reader.py`](../biolayer/data/wsi_reader.py) | Format-agnostic WSI reader (`.svs`+`.tiff`), MPP-normalized |
 | [`biolayer/data/tile_wsi.py`](../biolayer/data/tile_wsi.py) | Tissue-masked tiling + decoupled post-tiling filter stage |
 | [`biolayer/causal/`](../biolayer/causal) | The battery: `probe`, `intervene`, `battery`, `confound`, `attribution` |

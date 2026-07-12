@@ -7,5 +7,7 @@ Produced by the SageMaker embed job (deploy/sagemaker/tile_embed_entry.py) and l
 here as `OrderedVectorList`s that a future mech-interp scoring pass can rerank.
 """
 from .ordered_list import OrderedVectorList, load_global, load_patch_manifest
+from .rerank import axis_scores, rerank_by_axis, rerank_by_concept
 
-__all__ = ["OrderedVectorList", "load_global", "load_patch_manifest"]
+__all__ = ["OrderedVectorList", "load_global", "load_patch_manifest",
+           "axis_scores", "rerank_by_axis", "rerank_by_concept"]
