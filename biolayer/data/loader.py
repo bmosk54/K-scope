@@ -22,21 +22,42 @@ def local_npz_path(model_key, split, artifacts_dir=ARTIFACTS_DIR, dataset_slug=N
     return os.path.join(artifacts_dir, config.embeddings_key(model_key, split, slug))
 
 
+# In-memory cache of MATERIALIZED npz arrays, so a warm inference backend reads each
+# embeddings file (from disk or S3) exactly ONCE and every later call reuses the arrays
+# in RAM — no repeated disk reads, no repeated S3 downloads. Keyed by (model, split,
+# slug, artifacts_dir). Call clear_cache() to drop it.
+_NPZ_CACHE = {}
+
+
 def _open(model_key, split, artifacts_dir=ARTIFACTS_DIR, dataset_slug=None):
-    """Return (npz_dict, source). Local mirror first, then S3."""
+    """Return (npz_dict, source). In-memory cache first, then local mirror, then S3."""
     slug = dataset_slug or config.DATASET_SLUG
+    ck = (model_key, split, slug, artifacts_dir)
+    if ck in _NPZ_CACHE:
+        return _NPZ_CACHE[ck]
     path = local_npz_path(model_key, split, artifacts_dir, slug)
     if os.path.exists(path):
-        return np.load(path, allow_pickle=True), f"local:{path}"
-    # Fall back to the shared bucket (needs the S3 role fix — see SETUP.md).
-    import io
+        d = np.load(path, allow_pickle=True)
+        materialized = {k: d[k] for k in d.files}      # pull into RAM, drop the file handle
+        result = (materialized, f"local:{path}")
+    else:
+        # Fall back to the shared bucket (needs the S3 role fix — see SETUP.md).
+        import io
 
-    from . import s3_utils
-    key = config.embeddings_key(model_key, split, slug)
-    buf = io.BytesIO()
-    s3_utils.s3().download_fileobj(config.BUCKET, key, buf)
-    buf.seek(0)
-    return np.load(buf, allow_pickle=True), f"s3://{config.BUCKET}/{key}"
+        from . import s3_utils
+        key = config.embeddings_key(model_key, split, slug)
+        buf = io.BytesIO()
+        s3_utils.s3().download_fileobj(config.BUCKET, key, buf)
+        buf.seek(0)
+        d = np.load(buf, allow_pickle=True)
+        result = ({k: d[k] for k in d.files}, f"s3://{config.BUCKET}/{key}")
+    _NPZ_CACHE[ck] = result
+    return result
+
+
+def clear_cache():
+    """Drop the in-memory embeddings cache (e.g. after re-extracting a split)."""
+    _NPZ_CACHE.clear()
 
 
 def load(model_key="phikon_v2", split="train", artifacts_dir=ARTIFACTS_DIR,

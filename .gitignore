@@ -10,3 +10,21 @@ artifacts/
 s3inline.json
 Eddie.md
 .env.aws.sh
+
+# Home-directory files (repo lives at $HOME after unpacking owkin-hack)
+.aws/
+.bash_history
+.bashrc
+.cache/
+.claude/
+.claude.json
+.cursor/
+.cursor-server/
+.ipython/
+.lesshst
+.local/
+.mongodb/
+.npm/
+.nv/
+.sagemaker_remoteAccess_do_not_delete/
+.sagemaker_sql_editor_api_cache/

@@ -6,8 +6,10 @@ is aimed at a cell-morphology / malignancy objective rather than Phikon's
 tissue-class tumor-immune interface.
 
 Two things the H0-track owner sets (kept runnable-today by default, marked TODO):
-  - MODEL: defaults to `h0_mini` (CytoSyn-aligned, approval-queued). Point it at
-    `h_optimus_0` (gated=AUTO, instant) to run before H0-mini approval lands.
+  - MODEL: uses `h_optimus_0` (gated=AUTO, cached, extracted). `h0_mini` — the
+    CytoSyn-aligned target — is approval-gated and NOT accessible here, so the tissue
+    track runs on h_optimus_0; both are timm ViTs and share the live-intervention path
+    (`TimmLiveEncoder`), so h0_mini drops in unchanged once its weights + npz land.
   - DATASET: defaults to NCT-CRC-HE so the track runs today, but the intended
     divergence is a cell-type substrate (HistoPLUS 13 cell types / CytoSyn
     counterfactuals). Swap dataset_id/slug/class_names/objective when that lands.
@@ -15,8 +17,9 @@ Two things the H0-track owner sets (kept runnable-today by default, marked TODO)
 from .. import config
 from .base import Objective, Track
 
-# Flip to "h_optimus_0" to run today (gated=AUTO); "h0_mini" is the CytoSyn-aligned target.
-H0_MODEL_KEY = "h0_mini"
+# h_optimus_0 (gated=AUTO, cached) — h0_mini is approval-gated / not accessible here.
+# Restore "h0_mini" once its weights + a multi-layer npz are available.
+H0_MODEL_KEY = "h_optimus_0"
 
 H0 = Track(
     name="h0",

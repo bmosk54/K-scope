@@ -11,6 +11,7 @@ import numpy as np
 from .. import tracks
 from ..causal import attribution, battery, confound, intervene
 from ..causal import certify as certify_mod
+from ..causal import live as _live
 from ..causal import probe as _probe
 from ..data import loader
 from ..dynamic import certify_answer as _certify_answer
@@ -34,6 +35,75 @@ def certify_answer(prompt, answer, track="phikon", split="train", n_null=200,
     return _certify_answer(prompt, answer, track=track, split=split,
                            n_null=n_null, fast=fast, use_bedrock=use_bedrock,
                            live_ctx=live_ctx, explain=explain)
+
+
+def warmup(model="phikon_v2"):
+    """Prime the warm inference backend: load the frozen encoder + reference set +
+    population embeddings ONCE so live certification is served hot (no per-call weight
+    reload or re-download). Call at server startup."""
+    from .. import serving
+    return serving.warmup(model)
+
+
+def serving_status():
+    """What the warm backend currently holds resident (encoders, reference sets, RAM
+    embeddings)."""
+    from .. import serving
+    return serving.status()
+
+
+def embed(images=None, s3_tiles=None, slide_s3=None, keys=None, push_index=None,
+          slide_name="query", endpoint=None, region=None, max_tiles=16, mpp=0.5,
+          filters=None, vector_bucket_arn=None):
+    """On-demand H-optimus-0 embedding via the WARM SageMaker endpoint (external trigger).
+
+    The one live path into the frozen substrate: give NEW tile bytes / S3 tile keys / a
+    slide URI and get back the 1536-d CLS vector(s) without the 4 GB model re-download the
+    training-job path incurs per call. Optionally push straight into the h0-vector index
+    (`push_index`) so a fresh query tile becomes queryable next to the cohort. Provide
+    exactly one source. Degrades to status='unavailable' (never raises) if the endpoint
+    isn't deployed — deploy with `python deploy/sagemaker/deploy_endpoint.py`.
+    """
+    import base64
+    import json as _json
+    import os as _os
+
+    ep = endpoint or _os.environ.get("HOPTIMUS_ENDPOINT", "hoptimus-embed")
+    rgn = region or _os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
+    payload = {}
+    if images is not None:
+        payload["images"] = [b if isinstance(b, str) else base64.b64encode(b).decode() for b in images]
+        if keys:
+            payload["keys"] = keys
+    elif s3_tiles is not None:
+        payload["s3_tiles"] = s3_tiles
+    elif slide_s3 is not None:
+        payload.update(slide_s3=slide_s3, max_tiles=max_tiles, mpp=mpp,
+                       filters=filters or ["whitespace", "tissue"])
+    else:
+        return {"verb": "embed", "status": "bad_request",
+                "note": "give one of images | s3_tiles | slide_s3"}
+    if push_index:
+        push = {"index": push_index, "slide": slide_name}
+        if vector_bucket_arn:
+            push["bucket_arn"] = vector_bucket_arn
+        payload["push"] = push
+
+    try:
+        import boto3
+        rt = boto3.client("sagemaker-runtime", region_name=rgn)
+        resp = rt.invoke_endpoint(EndpointName=ep, ContentType="application/json",
+                                  Body=_json.dumps(payload).encode())
+        out = _json.loads(resp["Body"].read())
+        out["verb"] = "embed"
+        out.setdefault("status", "ok")
+        out["endpoint"] = ep
+        return out
+    except Exception as e:  # endpoint absent / not InService / auth — degrade, don't crash
+        return {"verb": "embed", "status": "unavailable", "endpoint": ep,
+                "error": type(e).__name__,
+                "note": f"endpoint not reachable ({e}); deploy it with "
+                        "`python deploy/sagemaker/deploy_endpoint.py`"}
 
 
 def _resolve(track, model, pos, neg):
@@ -104,13 +174,50 @@ def probe(model="phikon_v2", split="train", pos="TUM", neg="LYM", track=None):
 
 
 def ablate(model="phikon_v2", split="train", pos="TUM", neg="LYM", n_null=200, track=None):
-    """Necessity (readout space) + matched-random null."""
+    """Necessity (readout space) + matched-random null. CONCEPT-LEVEL (reference set)."""
     model, pos, neg, _ = _resolve(track, model, pos, neg)
     feats, labels, class_names, _ = loader.load(model, split)
     result = battery.run_battery(feats, labels, class_names, pos=pos, neg=neg, n_null=n_null)
-    return {"concept": f"{pos}_vs_{neg}", "model": model,
+    return {"concept": f"{pos}_vs_{neg}", "model": model, "scope": "concept-level",
             "necessity_readout": result["necessity_readout"],
-            "caveat": "readout-space projection only; layer-resolved curve is `layered`"}
+            "caveat": "readout-space projection over the REFERENCE set — concept-level, not "
+                      "slide-level. For the per-slide read use `ablate_live`."}
+
+
+def ablate_live(images, image_labels, model="phikon_v2", split="train", pos="TUM",
+                neg="LYM", readout_pos=None, readout_neg=None, ref_images=None,
+                ref_labels=None, n_null=20, track=None):
+    """SLIDE-LEVEL necessity — the input-dependent counterpart to `ablate`.
+
+    Edits THIS slide's REAL forward pass (hook the block, project the concept axis out of
+    the CLS, let it propagate) and measures whether the readout depends on the axis vs a
+    matched-random null (intervened_on_input=true). This is the mode that can catch a
+    per-slide hallucination: on a tumor tile, ablating the tumor axis bites but ablating
+    an absent concept (e.g. adipose, via readout_pos/neg cross-scoring) does not.
+
+    images / ref_images : lists of tile image FILE PATHS.
+    image_labels / ref_labels : lists of class-code strings (e.g. "TUM","NORM").
+    readout_pos/neg : score a DIFFERENT concept than the ablated one (ablate-A-score-B).
+    """
+    from PIL import Image
+    model, pos, neg, _ = _resolve(track, model, pos, neg)
+    if not _live.supports_live(model):
+        return {"verb": "ablate_live", "status": "unsupported",
+                "note": f"no live source-intervention encoder for {model}"}
+    _, _, class_names, _ = loader.load(model, split)
+    cn = list(class_names)
+    load = lambda ps: [Image.open(p).convert("RGB") for p in ps]
+    labs = lambda cs: np.array([cn.index(c) for c in cs])
+    res = intervene.live_necessity(
+        model, load(images), labs(image_labels), cn, pos=pos, neg=neg,
+        readout_pos=readout_pos, readout_neg=readout_neg,
+        ref_images=load(ref_images) if ref_images else None,
+        ref_labels=labs(ref_labels) if ref_labels else None,
+        n_null=n_null, artifacts_dir=loader.ARTIFACTS_DIR)
+    res["verb"] = "ablate_live"
+    res["scope"] = ("SLIDE-LEVEL: intervened on THIS input's forward pass — a per-slide "
+                    "causal read, unlike the concept-level `ablate`")
+    return res
 
 
 def specificity(model="phikon_v2", split="train", pos="TUM", neg="LYM",

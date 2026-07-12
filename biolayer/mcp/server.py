@@ -36,6 +36,21 @@ def hypothesis(track: str = "phikon", split: str = "train") -> dict:
 
 
 @mcp.tool()
+def warmup(model: str = "phikon_v2") -> dict:
+    """Prime the warm inference backend — load the frozen encoder + reference set +
+    population embeddings ONCE so live certification is served hot from this process (no
+    per-call weight reload or re-download). Call at startup before live certify calls."""
+    return verbs.warmup(model)
+
+
+@mcp.tool()
+def serving_status() -> dict:
+    """Report what the warm inference backend holds resident (encoders, reference sets,
+    in-RAM embeddings)."""
+    return verbs.serving_status()
+
+
+@mcp.tool()
 def certify_answer(prompt: str, answer: str, track: str = "phikon",
                    split: str = "train", n_null: int = 200, fast: bool = False,
                    explain: bool = False) -> dict:
@@ -132,8 +147,28 @@ def attribution(model: str = "phikon_v2", split: str = "train",
 @mcp.tool()
 def ablate(model: str = "phikon_v2", split: str = "train",
            pos: str = "TUM", neg: str = "LYM", n_null: int = 200) -> dict:
-    """Necessity (readout space) with a matched-random null."""
+    """Necessity (readout space) with a matched-random null. CONCEPT-LEVEL (reference set,
+    input-independent). For the per-slide read use `ablate_live`."""
     return verbs.ablate(model, split, pos, neg, n_null)
+
+
+@mcp.tool()
+def ablate_live(images: list, image_labels: list, model: str = "phikon_v2",
+                split: str = "train", pos: str = "TUM", neg: str = "LYM",
+                readout_pos: str = None, readout_neg: str = None,
+                ref_images: list = None, ref_labels: list = None,
+                n_null: int = 20) -> dict:
+    """SLIDE-LEVEL necessity — edit THIS slide's REAL forward pass and measure whether the
+    readout depends on the concept axis vs a matched-random null (intervened_on_input=true).
+
+    The input-dependent counterpart to `ablate`: the mode that can catch a per-slide
+    hallucination. `images`/`ref_images` are tile FILE PATHS; `image_labels`/`ref_labels`
+    are class-code strings (e.g. "TUM","NORM"). Set `readout_pos`/`readout_neg` to score a
+    different concept than the one ablated (ablate-A-score-B cross-interference).
+    """
+    return verbs.ablate_live(images, image_labels, model=model, split=split, pos=pos,
+                             neg=neg, readout_pos=readout_pos, readout_neg=readout_neg,
+                             ref_images=ref_images, ref_labels=ref_labels, n_null=n_null)
 
 
 @mcp.tool()
@@ -170,6 +205,24 @@ def confound(model: str = "phikon_v2", split: str = "train",
     Returns 'no_multisite_data' until multi-site data lands (track #2).
     """
     return verbs.confound_verb(model, split, pos, neg)
+
+
+@mcp.tool()
+def embed(images: list = None, s3_tiles: list = None, slide_s3: str = None,
+          keys: list = None, push_index: str = None, slide_name: str = "query",
+          max_tiles: int = 16, mpp: float = 0.5) -> dict:
+    """Embed NEW pathology tiles on demand through the warm H-optimus-0 endpoint.
+
+    The live bridge into the frozen substrate: turn fresh tissue — base64 tile bytes
+    (`images`), S3 tile keys (`s3_tiles`), or a slide URI (`slide_s3`, bounded by
+    `max_tiles`) — into 1536-d CLS vectors WITHOUT re-downloading the 4 GB model per call
+    (it stays warm on a g5 endpoint). Set `push_index` to also write the vectors into that
+    h0-vector index so a query tile becomes searchable alongside the cohort. Provide exactly
+    one source. Returns status='unavailable' (never errors) if the endpoint isn't deployed.
+    """
+    return verbs.embed(images=images, s3_tiles=s3_tiles, slide_s3=slide_s3, keys=keys,
+                       push_index=push_index, slide_name=slide_name,
+                       max_tiles=max_tiles, mpp=mpp)
 
 
 def main():

@@ -1,0 +1,13 @@
+{
+  "name": "biolayer-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local visual prototype for the BioLayer pathology causal-certification demo (see ../docs/ARCHITECTURE.md). Zero npm dependencies — static assets served by a plain Node http server so it runs anywhere with just `node`.",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}
