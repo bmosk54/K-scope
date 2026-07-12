@@ -86,10 +86,7 @@ def main():
         TrainingJobName=job,
         AlgorithmSpecification={"TrainingImage": DLC, "TrainingInputMode": "File"},
         RoleArn=args.role,
-        HyperParameters={
-            "sagemaker_program": json.dumps("tile_embed_entry.py"),
-            "sagemaker_submit_directory": json.dumps(f"s3://{BUCKET}/{code_key}"),
-        },
+        HyperParameters=hp,
         Environment=env,
         OutputDataConfig={"S3OutputPath": f"s3://{BUCKET}/{PREFIX}/output"},
         ResourceConfig={"InstanceType": args.instance_type, "InstanceCount": 1,
