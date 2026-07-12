@@ -54,33 +54,82 @@
     el.cliMeta.className = "rr-cli-meta" + (cls ? " " + cls : "");
     el.cliMeta.textContent = text;
   }
-  // Emit one iteration's reasoning as a block of terminal lines: probe → certify →
-  // locate → ablate → reflect, mirroring the pipeline stages.
+  // Typewriter queue — print the reasoning lines one-by-one (like a live agent trace)
+  // rather than dumping a whole iteration at once, and stay in order even if a new
+  // iteration lands while the previous block is still printing.
+  var cliQueue = [], cliTyping = false, CLI_DELAY = 90;
+  function cliEnqueue(lines) {
+    for (var i = 0; i < lines.length; i++) if (lines[i]) cliQueue.push(lines[i]);
+    if (!cliTyping) cliPump();
+  }
+  function cliPump() {
+    if (!cliQueue.length) { cliTyping = false; cliCursor(); return; }
+    cliTyping = true;
+    var it = cliQueue.shift();
+    cliLine(it.h, it.c);
+    window.setTimeout(cliPump, CLI_DELAY);
+  }
+  function cliFlush() { cliQueue = []; cliTyping = false; }
+
+  // Emit one iteration's FULL reasoning as terminal lines mirroring the 5 pipeline
+  // stages: probe → certify → locate → ablate → reflect. Every reasoning field the
+  // loop produces (hypothesis, per-pillar confidences, layer bites, the ablation gap
+  // vs the matched-random null, the diagnosis + weakest pillar, the next hypothesis/
+  // probe, and the message to downstream) is surfaced here.
   function cliEmit(r) {
     var c = r.contrast || {}, ab = r.ablation || {}, pil = r.pillars || {};
-    cliLine('<span class="rr-cli-k">── iter ' + r.iter + " / " + r.max_iters + " ─────────────────────</span>", "hr");
-    var by = r.proposed_by ? '  <span class="rr-cli-k">by</span> <span class="rr-cli-v">' + escapeHtml(r.proposed_by) + "</span>" : "";
-    cliLine('<span class="rr-cli-stage">probe  </span> <span class="rr-cli-k">concept=</span><span class="rr-cli-v">' +
-      escapeHtml(r.concept || (c.pos + " vs " + c.neg)) + "</span>" + by);
-    if (r.hypothesis) cliLine('           <span class="rr-cli-k">hyp:</span> ' + escapeHtml(r.hypothesis), "dim");
+    var lines = [];
+    var P = function (h, cls) { lines.push({ h: h, c: cls }); };
+    var K = function (label) { return '<span class="rr-cli-k">' + label + '</span> '; };
+    var V = function (val) { return '<span class="rr-cli-v">' + escapeHtml(String(val)) + '</span>'; };
+    var pad = "           ";
+
+    P('<span class="rr-cli-k">── iter ' + r.iter + " / " + r.max_iters + " ─────────────────────</span>", "hr");
+
+    // 1 · PROBE — design the concept axis + matched-random null
+    var by = r.proposed_by ? "  " + K("by") + V(r.proposed_by) : "";
+    P('<span class="rr-cli-stage">probe  </span> ' + K("axis=") +
+      V(r.concept || (c.pos + " vs " + c.neg)) +
+      (c.distractor && c.distractor.length ? " " + K("distractor=") + V(c.distractor.join("+")) : "") + by);
+    if (r.hypothesis) P(pad + K("hyp:") + escapeHtml(r.hypothesis), "dim");
+
+    // 2 · CERTIFY — necessity × sufficiency × specificity vs the null
     var pills = ["necessity", "sufficiency", "specificity"].map(function (k) {
       var p = pil[k] || {};
       return '<span class="rr-cli-' + (p.passed ? "ok" : "no") + '">' + k.slice(0, 4) + (p.passed ? "✓" : "✕") + "</span>";
     }).join(" ");
-    cliLine('<span class="rr-cli-stage">certify</span> <span class="rr-cli-' + escapeHtml(r.verdict) + '">' +
-      escapeHtml(r.verdict) + '</span> <span class="rr-cli-k">score=</span><span class="rr-cli-v">' +
-      fmt(r.score, 3) + "</span>   " + pills);
-    cliLine('<span class="rr-cli-stage">locate </span> <span class="rr-cli-k">load layer=</span><span class="rr-cli-v">' +
-      (ab.layer != null ? ab.layer : "—") + "</span>" +
-      (r.circuit_mode ? ' <span class="rr-cli-k">mode=</span><span class="rr-cli-v">' + escapeHtml(r.circuit_mode) + "</span>" : ""));
-    cliLine('<span class="rr-cli-stage">ablate </span> <span class="rr-cli-v">' + escapeHtml(ab.note || "—") + "</span>");
-    if (r.diagnosis) cliLine('<span class="rr-cli-stage">reflect</span> ↳ ' + escapeHtml(r.diagnosis), "reflect");
-    if (r.next_probe)
-      cliLine('           <span class="rr-cli-next">→ next probe:</span> <span class="rr-cli-v">' +
-        escapeHtml(r.next_probe.pos + " vs " + r.next_probe.neg) + "</span>", "reflect");
-    else if (r.next_hypothesis)
-      cliLine('           <span class="rr-cli-next">→</span> ' + escapeHtml(r.next_hypothesis), "reflect");
-    cliCursor();
+    P('<span class="rr-cli-stage">certify</span> <span class="rr-cli-' + escapeHtml(r.verdict) + '">' +
+      escapeHtml(r.verdict) + "</span> " + K("score=") + V(fmt(r.score, 3)) + "   " + pills);
+    var conf = ["necessity", "sufficiency", "specificity"].map(function (k) {
+      return k.slice(0, 4) + " " + fmt((pil[k] || {}).confidence, 2);
+    }).join(" · ");
+    P(pad + K("pillars:") + V(conf), "dim");
+
+    // 3 · LOCATE — where in the stack the circuit lives
+    var bites = (r.circuit || []).filter(function (n) { return n.bites; }).map(function (n) { return n.layer; });
+    P('<span class="rr-cli-stage">locate </span> ' + K("load layer=") + V(ab.layer != null ? ab.layer : "—") +
+      (r.circuit_mode ? " " + K("mode=") + V(r.circuit_mode) : "") +
+      " " + K("bites@") + V(bites.join(",") || "none"));
+
+    // 4 · ABLATE — knock the axis out, measure the gap vs the matched-random null
+    P('<span class="rr-cli-stage">ablate </span> ' + V(ab.note || "—"));
+    if (ab.necessity_gap != null)
+      P(pad + K("necessity gap vs null:") + V(fmt(ab.necessity_gap, 3)) +
+        ' <span class="rr-cli-' + (ab.bites ? "ok" : "no") + '">' + (ab.bites ? "bites" : "redundant (Hydra)") + "</span>", "dim");
+
+    // 5 · REFLECT — diagnose the weakest pillar, propose the next hypothesis + probe
+    if (r.diagnosis)
+      P('<span class="rr-cli-stage">reflect</span> ↳ ' +
+        (r.weakest_pillar ? K("[weakest: " + escapeHtml(r.weakest_pillar) + "]") : "") +
+        escapeHtml(r.diagnosis), "reflect");
+    if (r.next_hypothesis)
+      P(pad + '<span class="rr-cli-next">→ hypothesis:</span> ' + escapeHtml(r.next_hypothesis), "reflect");
+    if (r.next_probe && r.next_probe.pos)
+      P(pad + '<span class="rr-cli-next">→ next probe:</span> ' + V(r.next_probe.pos + " vs " + r.next_probe.neg), "reflect");
+    if (r.message_to_downstream)
+      P(pad + K("⤷ to downstream:") + escapeHtml(r.message_to_downstream), "dim");
+
+    cliEnqueue(lines);
   }
 
   // ---- pipeline visualization --------------------------------------------
@@ -162,10 +211,11 @@
 
   // ---- lifecycle ----------------------------------------------------------
   el.start.addEventListener("click", start);
-  el.stop.addEventListener("click", function () { stop("stopped", "done"); });
+  el.stop.addEventListener("click", function () { cliFlush(); stop("stopped", "done"); });
 
   function start() {
     stop(null);                                  // clear any prior run
+    cliFlush();                                  // drop any half-printed reasoning
     el.feed.innerHTML = "";
     agg = {};
     el.summary.hidden = true; el.aggBox.innerHTML = "";
@@ -225,9 +275,10 @@
     d.textContent = (rec.reason === "converged" ? "✓ converged — " : "● ") + (rec.note || rec.reason || "done");
     el.feed.appendChild(d);
     setStatus(rec.reason === "converged" ? "converged" : "done (" + (rec.reason || "") + ")", "done");
-    cliLine('<span class="rr-cli-k">── ' + (rec.reason === "converged" ? "✓ converged" : "● " + (rec.reason || "done")) +
-      " ──────────────────</span> " + escapeHtml(rec.note || ""), "hr");
-    cliCursor();
+    // enqueue (don't cliLine) so this lands AFTER the last iteration's reasoning finishes typing
+    cliEnqueue([{ h: '<span class="rr-cli-k">── ' +
+      (rec.reason === "converged" ? "✓ converged" : "● " + (rec.reason || "done")) +
+      " ──────────────────</span> " + escapeHtml(rec.note || ""), c: "hr" }]);
     stop(null);
     el.feed.scrollTop = el.feed.scrollHeight;
   }
