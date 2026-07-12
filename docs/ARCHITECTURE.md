@@ -17,6 +17,11 @@ controls — whether the concept is **necessary**, **sufficient**, **specific**,
 the signal survives a **site/scanner confound gate**. See [CLAUDE.md](../CLAUDE.md) for the
 scope decision and [STRATEGY.md](STRATEGY.md) for why this is the defensible wedge.
 
+Alongside the tile-level certify path, a **whole-slide ingestion → embedding → vector-store**
+pipeline (§2b) pulls raw WSIs (TCGA/GDC or any URL) into S3, tiles + embeds them with
+H-optimus-0, and routes the vectors into the `h0-vector` S3 Vectors store for biodiscovery
+retrieval.
+
 ## 2. End-to-end pipeline
 
 ```
@@ -60,6 +65,36 @@ scope decision and [STRATEGY.md](STRATEGY.md) for why this is the defensible wed
    Details: docs/DESIGN_MIL_AGGREGATOR.md
 ```
 
+## 2b. Whole-slide ingestion → embeddings → vector store
+
+The slide-level path that turns raw WSIs into queryable embeddings for biodiscovery
+retrieval. Every stage runs as an **in-region SageMaker job** — the dev box has poor
+bandwidth to non-AWS hosts (GDC/GCS stall at ~0 MB/s), while AWS↔AWS and AWS↔web are fast.
+
+```
+ WSI source: TCGA/GDC file UUID  |  any direct URL (Kaggle/BRACS, …)
+        │  in-region ingest job — biolayer.data.wsi_ingest (idempotent, skip-if-present)
+        │  launch: deploy/sagemaker/launch_ingest.py  (ml.m5.large)
+        ▼
+ s3://bucketbiolayer/wsi/<project>/<slide>.svs|.tiff
+        │  GPU tile+embed job — deploy/sagemaker/launch_tile_embed.py  (ml.g5.2xlarge)
+        ▼
+   wsi_reader.open_wsi  (svs + tiff, one interface, MPP-normalized)
+        │
+   tile_wsi  — coarse tissue mask → 224px grid @ ~0.5 µm/px → post-tiling FILTERS
+        │      (whitespace / tissue; decoupled + extensible; --max-tiles for trials)
+        ▼
+   H-optimus-0 CLS  [N, 1536]
+        ├─▶ features  → s3://bucketbiolayer/embeddings/wsi/<slide>/hoptimus.npz
+        └─▶ vectors   → h0-vector / index `layerbioindex` (dim 1536, cosine, float32)
+                          → biodiscovery retrieval (QueryVectors)
+```
+
+The reader is **format-agnostic** (OpenSlide primary, tifffile fallback) so `.svs` and
+`.tiff` never branch; the filter stage is a first-class registry applied inline or
+post-hoc (`--filter-existing`). See [DESIGN_MIL_AGGREGATOR.md](DESIGN_MIL_AGGREGATOR.md)
+for how these tile embeddings roll up to slide level.
+
 ## 3. Substrate (frozen encoders + data)
 
 Model registry and dataset layout are the single source of truth in
@@ -84,9 +119,13 @@ Every tile is embedded at **3 depths** × **{global CLS, local mean-patch}**. Da
 | [`biolayer/data/models.py`](../biolayer/data/models.py) | Frozen encoder loading; multi-layer local+global `embed()` |
 | [`biolayer/data/extract.py`](../biolayer/data/extract.py) | CLI: tile → `.npz` embeddings, optional S3 upload |
 | [`biolayer/data/s3_utils.py`](../biolayer/data/s3_utils.py) | Shared S3 artifact channel |
+| [`biolayer/data/wsi_ingest.py`](../biolayer/data/wsi_ingest.py) | Idempotent slide ingest → S3 (GDC UUID or any URL) |
+| [`biolayer/data/wsi_reader.py`](../biolayer/data/wsi_reader.py) | Format-agnostic WSI reader (`.svs`+`.tiff`), MPP-normalized |
+| [`biolayer/data/tile_wsi.py`](../biolayer/data/tile_wsi.py) | Tissue-masked tiling + decoupled post-tiling filter stage |
 | [`biolayer/causal/`](../biolayer/causal) | The battery: `probe`, `intervene`, `battery`, `confound`, `attribution` |
 | [`biolayer/mcp/`](../biolayer/mcp) | MCP `server` + `verbs` + `card` — the `certify` interface |
-| [`biolayer/mil/`](../biolayer/mil) | **New / stretch:** slide-level aggregation by reusing a ViT's final block |
+| [`biolayer/mil/`](../biolayer/mil) | **Stretch:** slide-level aggregation by reusing a ViT's final block |
+| [`deploy/sagemaker/`](../deploy/sagemaker) | CLI SageMaker jobs: `launch_ingest` (WSI→S3), `launch_tile_embed` (WSI→features+vectors), `launch` (H-optimus-0 weight edits) |
 
 ## 5. Compute & infrastructure (AWS)
 
@@ -103,8 +142,10 @@ Every tile is embedded at **3 depths** × **{global CLS, local mean-patch}**. Da
     `PutVectors`/`QueryVectors`/…. **The embedding destination**: tile/slide vectors land
     here and are queried by the biodiscovery retrieval layer.
 - **GPU — SageMaker Training Job, CLI only** (no Studio/UI). H-optimus-0 (ViT-g/14) runs
-  on **`ml.g5.2xlarge`** (A10G, quota = 1) via [`deploy/sagemaker/launch.py`](../deploy/sagemaker/launch.py)
-  (raw boto3), using execution role `owkin-sm-exec`. EKS was evaluated and **dropped**:
+  on **`ml.g5.2xlarge`** (A10G, quota = 1) via the raw-boto3 launchers in
+  [`deploy/sagemaker/`](../deploy/sagemaker) (`launch_tile_embed` for WSI→embeddings,
+  `launch` for weight edits), using execution role `owkin-sm-exec`; ingest runs on a cheap
+  `ml.m5.large`. EKS was evaluated and **dropped**:
   the account has **0 EC2 G/VT and 0 HyperPod g5 quota**, so no cluster can attach a GPU
   node — and a single extraction job plus a stdio MCP server need no orchestration. A
   SageMaker **endpoint** (g5 quota = 2) is the path if hosted GPU inference is ever needed.
