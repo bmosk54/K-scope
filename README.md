@@ -26,3 +26,15 @@ GPU jobs + weight surgery live in [`deploy/sagemaker/`](deploy/sagemaker/).
 **Compute/data:** GPU via SageMaker Training Jobs (CLI only); artifacts in
 `s3://bucketbiolayer` (read/write); embeddings routed to the **`h0-vector`** S3 Vectors
 store for biodiscovery retrieval. EKS was evaluated and dropped (0 GPU quota).
+
+## Visualization
+
+[`dashboard/`](dashboard/) is a local, no-build-step prototype UI for the demo — a
+Goodfire-style cockpit over a `certify_answer()` evidence card (Case / Proof / Verdict),
+with a live pixel-to-concept-axis histology view. It reads mock data shaped exactly like
+the real MCP response (see `dashboard/public/data.js`), so it's ready to plug in live
+output.
+
+```bash
+cd dashboard && node server.js   # http://localhost:4173
+```
