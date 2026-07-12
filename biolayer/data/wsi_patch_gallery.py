@@ -469,11 +469,15 @@ _TEMPLATE = r"""<!DOCTYPE html>
     tIcon.textContent = mode === 'dark' ? '☀' : '◐';
     tLabel.textContent = mode === 'dark' ? 'Light' : 'Dark';
   }
-  const savedTheme = localStorage.getItem('gallery-theme');
+  // localStorage throws a SecurityError on opaque origins (e.g. file://); guard it so a
+  // failed theme read/write can't halt the whole script and leave the gallery un-wired.
+  let savedTheme = null;
+  try { savedTheme = localStorage.getItem('gallery-theme'); } catch (e) {}
   applyTheme(savedTheme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   tBtn.addEventListener('click', () => {
     const next = tRoot.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-    applyTheme(next); localStorage.setItem('gallery-theme', next);
+    applyTheme(next);
+    try { localStorage.setItem('gallery-theme', next); } catch (e) {}
   });
 
   // source (WSI) switcher: make the header link open a menu of known slides
