@@ -1,10 +1,10 @@
 {
-  "source": "H-optimus-0 (ViT-g/14, 1536-d) whole-slide inference over real NCT-CRC-HE tiles",
+  "source": "One real 224px NCT-CRC-HE tile (Kather colorectal H&E, tile #14), read by the frozen substrate (phikon-v2 / H-optimus-0). Tile-level — a single tile, not a whole slide, carrying no spatial-adjacency information.",
   "substrate": "h_optimus_0",
-  "n_tiles": 24,
-  "image": "slide.png",
-  "cols": 6,
-  "prompt": "Describe cancer cells, tumor-infiltrating lymphocytes, plasma cells, and mitotic figures at the invasive margin.",
-  "ho_composition": "TUM 42%, LYM 33%, STR 17%, NORM 4%, MUS 4%",
-  "tile_agreement": 1.0
+  "sampling": "tile-level · one 224px tile · no spatial adjacency",
+  "n_tiles": 1,
+  "tile_class": "TUM",
+  "image": "input_tile.png",
+  "prompt": "This is a single 224px NCT-CRC-HE colorectal H&E tile (frozen substrate; tile-level — no whole slide, no spatial adjacency). Encoder tile class: tumor epithelium (TUM). Give a full diagnostic assessment: tumor grade, the cellular immune infiltrate, invasive features, and molecular / staging status.",
+  "ho_composition": "one NCT-CRC-HE tile · encoder class TUM (tumor epithelium)"
 }
