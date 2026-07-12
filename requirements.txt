@@ -9,4 +9,10 @@ scikit-learn
 pandas
 matplotlib
 Pillow
+# WSI I/O — random-access region reads on gigapixel slides (biolayer/data/wsi_*.py).
+# openslide-bin bundles libopenslide (no apt); tifffile+zarr is the OME-TIFF fallback.
+openslide-python
+openslide-bin
+tifffile
+zarr
 mcp

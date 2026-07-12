@@ -47,6 +47,9 @@ def _nice_scale_um(tile_um: float):
 def build_card(slide: str, x: int, y: int, size: int, anchor: str,
                out_html: str, scratch: str, display_max: int) -> dict:
     """Extract tile + overview for one (x, y) and write the self-contained HTML card."""
+    from PIL import Image
+    from .wsi_reader import open_wsi
+
     local = slide if not slide.startswith("s3://") else wt._download(slide, scratch)
     stem = os.path.splitext(os.path.basename(local))[0]
 
@@ -57,23 +60,34 @@ def build_card(slide: str, x: int, y: int, size: int, anchor: str,
     tile_png = os.path.join(scratch, f"{stem}__card_tile_{x0}_{y0}_{size}.png")
     over_png = os.path.join(scratch, f"{stem}__card_overview.png")
 
-    # native-res crop; extract() clamps a slice that runs off the edge.
-    tile_meta = wt.extract(local, level=0, max_size=display_max, out_path=tile_png,
-                           region=(x0, y0, size, size), region_level=0)
-    # whole-slide overview (smallest pyramid level).
-    wt.extract(local, level=-1, max_size=1600, out_path=over_png)
+    # Random-access reader: OpenSlide reads only the tiles overlapping the region, so
+    # this never materializes a full level (works on slides whose level 0 exceeds RAM).
+    reader = open_wsi(local)
+    try:
+        w0, h0 = reader.dimensions
+        n_levels = reader.level_count
+        mpp = reader.mpp
+        mag = round(10.0 / mpp) if mpp else None
+        # clamp the requested origin to the slide so the locator box + labels stay truthful.
+        x0c = max(0, min(x0, w0 - 1))
+        y0c = max(0, min(y0, h0 - 1))
+        w_eff = min(size, w0 - x0c)
+        h_eff = min(size, h0 - y0c)
+        clamped = (x0c, y0c, w_eff, h_eff) != (x0, y0, size, size)
 
-    w0, h0 = tile_meta["level0_dimensions"]
-    # clamp the requested origin to the slide so the locator box + labels stay truthful.
-    x0c = max(0, min(x0, w0 - 1))
-    y0c = max(0, min(y0, h0 - 1))
-    w_eff = min(size, w0 - x0c)
-    h_eff = min(size, h0 - y0c)
-    clamped = (x0c, y0c, w_eff, h_eff) != (x0, y0, size, size)
+        tile_img = reader.read_region((x0c, y0c), 0, (w_eff, h_eff))   # RGB PIL.Image
+        over_arr, _ = reader.thumbnail(1600)                          # bounded, never full-res
+    finally:
+        reader.close()
 
-    mpp = tile_meta.get("mpp_um_per_px")
-    mag = tile_meta.get("magnification")
-    disp_w, disp_h = tile_meta["output_size"]
+    os.makedirs(scratch, exist_ok=True)
+    Image.fromarray(over_arr).save(over_png)
+    # downscale the tile only for the web view; keep native res otherwise.
+    if max(tile_img.size) > display_max:
+        tile_img = tile_img.copy()
+        tile_img.thumbnail((display_max, display_max), Image.LANCZOS)
+    tile_img.save(tile_png)
+    disp_w, disp_h = tile_img.size
     downsampled = (disp_w, disp_h) != (w_eff, h_eff)
 
     # locator box as a percentage of the overview (== percentage of level-0).
@@ -116,7 +130,7 @@ def build_card(slide: str, x: int, y: int, size: int, anchor: str,
         "__RES__": res_txt, "__MAG__": mag_txt,
         "__TILENOTE__": tile_note,
         "__L0DIMS__": f"{w0} × {h0}",
-        "__NLEV__": str(tile_meta["level_count"]),
+        "__NLEV__": str(n_levels),
         "__SCALEFRAC__": f"{scale_frac * 100:.1f}", "__SCALELBL__": scale_label,
         "__CLAMPNOTE__": ("Requested region ran past the slide edge and was clamped."
                           if clamped else ""),
