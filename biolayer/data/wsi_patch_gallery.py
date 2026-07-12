@@ -120,7 +120,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>__STEM__ — patch gallery</title>
+<title>__STEM__ — slide gallery</title>
 <script>
   /* set the theme BEFORE first paint so dark mode never flashes light on reload */
   (function () {
@@ -212,13 +212,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
   /* dashed unit boxes drawn on the stage view: subtle scale markers for the ranked unit.
      Centered on the crop (the crop is centered on the ranked patch/tile); sized in JS. */
   .stage-imgwrap { position: relative; display: block; width: 100%; }
-  /* dashed marker for the ranked unit, sized in JS. Cyan is the complement of H&E's
-     pink/purple so it stands out on tissue (and is distinct from the pink UI accent);
-     a dark + light 1px outline keeps the dash readable on any background. */
+  /* dashed marker for the ranked unit, sized in JS. Red reads strongly on H&E and matches
+     the active-region red; a dark + light 1px outline keeps the dash sharp on any background. */
   .unit-box { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
     pointer-events: none; box-sizing: border-box; border-radius: 2px; min-width: 6px; min-height: 6px;
-    border: 2px dashed #00e5ff;
-    box-shadow: 0 0 0 1px rgba(0,0,0,.6), inset 0 0 0 1px rgba(0,0,0,.35); }
+    border: 2px dashed #ff1f2e;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.55); }
 
   /* three regions: thumb rail · stage · aside */
   .layout { display: grid; gap: 20px; margin-top: 16px;
@@ -229,6 +228,24 @@ _TEMPLATE = r"""<!DOCTYPE html>
   }
   @media (max-width: 879px) {
     .layout { grid-template-columns: 1fr; grid-template-areas: "rail" "stage" "aside"; }
+  }
+
+  /* Desktop: fit the whole gallery to one screen — no page scrollbars. The .wrap becomes a
+     100%-height flex column, the layout fills the leftover height, and the square stage image
+     is sized to the largest square that fits the remaining box (min of the box's w/h, via
+     container-query units). Guarded by @supports so unsupported browsers keep the scroll flow. */
+  .stage-imgbox { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; }
+  @media (min-width: 880px) {
+    @supports (container-type: size) {
+      html, body { height: 100%; }
+      .wrap { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+      .layout { flex: 1 1 auto; min-height: 0; align-items: stretch; }
+      .stage { min-height: 0; overflow: hidden; }
+      .stage-imgbox { container-type: size; }
+      .stage-imgwrap { width: min(100cqw, 100cqh); height: auto; aspect-ratio: 1 / 1; }
+      .stage-img { height: 100%; aspect-ratio: auto; }
+      .aside, .rail { min-height: 0; overflow-y: auto; }
+    }
   }
 
   /* thumbnail rail */
@@ -324,7 +341,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle dark mode">
     <span id="theme-icon">◐</span><span id="theme-label">Dark</span></button>
   <header>
-    <span class="eyebrow">Whole-slide image · patch gallery</span>
+    <span class="eyebrow">Whole-slide image · slide gallery</span>
     <h1>__STEM__</h1>
     <p class="sub">H&amp;E · Aperio SVS · __MAG_TXT__ ·
       <span class="src-switch" id="src-switch">
@@ -339,12 +356,11 @@ _TEMPLATE = r"""<!DOCTYPE html>
     <div id="unit-toggle" class="rank-toggle" hidden>
       <span class="rt-label">Rank by</span>
       <div class="rt-seg">
-        <button id="ut-patch" class="rt-btn" type="button" aria-pressed="true">14×14 patch</button>
-        <button id="ut-tile" class="rt-btn" type="button" aria-pressed="false">224×224 tile</button>
+        <button id="ut-tile" class="rt-btn" type="button" aria-pressed="true">224×224 tile</button>
+        <button id="ut-patch" class="rt-btn" type="button" aria-pressed="false">14×14 patch</button>
       </div>
     </div>
     <div id="rank-toggle" class="rank-toggle" hidden>
-      <span class="rt-label">Show along axis</span>
       <div class="rt-seg">
         <button id="rt-top" class="rt-btn" type="button" aria-pressed="true">▲ Top 24</button>
         <button id="rt-bottom" class="rt-btn" type="button" aria-pressed="false">▼ Bottom 24</button>
@@ -365,10 +381,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
 
     <section class="stage">
       <div class="stage-title"><span class="dot"></span><b id="st-title">—</b></div>
-      <div class="stage-imgwrap" id="unit-overlay">
-        <img class="stage-img" id="stage-img" alt="">
-        <div class="unit-box box-tile" id="box-tile" hidden></div>
-        <div class="unit-box box-patch" id="box-patch" hidden></div>
+      <div class="stage-imgbox">
+        <div class="stage-imgwrap" id="unit-overlay">
+          <img class="stage-img" id="stage-img" alt="">
+          <div class="unit-box box-tile" id="box-tile" hidden></div>
+          <div class="unit-box box-patch" id="box-patch" hidden></div>
+        </div>
       </div>
       <div class="stage-foot">
         <span id="st-note">—</span>
@@ -388,9 +406,6 @@ _TEMPLATE = r"""<!DOCTYPE html>
           <dt>Resolution</dt><dd>__MPP_TXT__</dd>
           <dt>Magnification</dt><dd>__MAG_TXT__</dd>
         </dl>
-        <p class="hint">The <b>view</b> is a fixed context crop; the <b>unit</b> is what ranking
-          scores — a 14&times;14 patch token, or the whole 224&times;224 tile embedding. The dashed
-          square on the view marks that unit at scale.</p>
       </div>
 
       <div class="panel">
@@ -415,7 +430,8 @@ _TEMPLATE = r"""<!DOCTYPE html>
   const PATCHES_TILE_TOP = __PATCHES_TILE__;        // 224×224 tile-embedding ranking (or null)
   const PATCHES_TILE_BOTTOM = __PATCHES_TILE_BOTTOM__;
   const MPP = __MPP_NUM__;
-  let unit = 'patch', curEnd = 'top';               // ranking unit (patch|tile) × axis end
+  // ranking unit (tile|patch) × axis end; default to the 224×224 tile when that ranking exists
+  let unit = (PATCHES_TILE_TOP && PATCHES_TILE_TOP.length) ? 'tile' : 'patch', curEnd = 'top';
   const PAGE = 6;                                   // at most 6 thumbnails on the rail at once
 
   const thumbsEl = document.getElementById('thumbs');
@@ -621,9 +637,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     utTile.addEventListener('click', () => setUnit('tile'));
   }
 
-  renderBoxes();
-  renderThumbs();
-  setActive(0);
+  applySet();   // initial paint through the same path as the toggles (picks tile/patch set)
 </script>
 </body>
 </html>

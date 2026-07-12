@@ -1013,14 +1013,11 @@
   // scrollbar — it's same-origin, so we can read its document height directly. Falls back to
   // the CSS height on the (unexpected) cross-origin case.
   function fitGalleryFrame() {
+    // The gallery now fills the frame via CSS (height:100% chain) and fits itself to one
+    // screen, so we just clear any stale inline height and let CSS govern — no content-grow
+    // (which would reintroduce a taller-than-viewport frame and an outer scrollbar).
     const f = document.getElementById("gallery-frame");
-    if (!f) return;
-    try {
-      const doc = f.contentDocument || (f.contentWindow && f.contentWindow.document);
-      if (!doc || !doc.body) return;
-      const h = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight);
-      if (h > 0) f.style.height = h + "px";
-    } catch (e) { /* cross-origin — leave the CSS height */ }
+    if (f) f.style.height = "";
   }
 
   function initNavigation() {

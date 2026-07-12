@@ -533,11 +533,14 @@ body[data-view="gallery"] #view-gallery { display: block; }
 /* the embedded gallery has its own header -> drop the redundant dashboard topbar here */
 body[data-view="gallery"] .topbar { display: none; }
 .gallery-frame {
-  /* height is set by fitGalleryFrame() to the iframe's own content height so there's no
-     nested scrollbar; min-height keeps it a full screen if that JS ever can't measure. */
   width: 100%; min-height: calc(100vh - 64px); border: 1px solid var(--border);
   border-radius: 10px; background: var(--panel); display: block;
 }
+/* Gallery view fills the screen exactly: drop the view-wrap padding + scroll and let the
+   iframe (which fits itself to one screen) take the full height — no scrollbars anywhere. */
+body[data-view="gallery"] .view-wrap { padding: 0; overflow: hidden; }
+body[data-view="gallery"] #view-gallery { height: 100%; }
+body[data-view="gallery"] .gallery-frame { height: 100%; min-height: 0; border: 0; border-radius: 0; }
 
 /* ---- Prompt console: certify score + reasoning-trace boxes-with-arrows ---- */
 .c-trace { margin-top: 12px; background: #FFFFFF; border: 1px solid #EAE3D5;
