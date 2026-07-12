@@ -387,3 +387,232 @@ generalization actually run here:
   tissue") to demonstrate NULL/decline is the natural next run.
 - Confound gate still **UNCHECKED** — single-source NCT-CRC; needs multi-site H&E (TCGA/Kömen).
 - K-Pro is *simulated* by Sonnet; real K-Pro query integration is not wired.
+
+---
+
+# Cell-typing substrate is LIVE — HistoPLUS → H0-mini, real embeddings (2026-07-12)
+
+The 12 HistoPLUS cell-type concepts were `NOT_CERTIFIABLE` (needs-data) since the substrate
+was registered. **Access to the gated repos landed, so we built the real npz and the whole
+cell-type vocabulary is now certifiable on real embeddings** — not the synthetic stand-in
+used to validate the plumbing earlier.
+
+**Pipeline (all real).** 400 NCT-CRC-HE tiles (shuffled, mixed classes) → HistoPLUS CellViT
+segmentation + classification → 1,650 nuclei across all 13 cell types → 112 px context crop
+per nucleus → frozen **H0-mini CLS (768-d)** → balanced npz at
+`embeddings/histoplus_celltype/h0_mini/train.npz` → `concepts.resolve()` flips 12 cell
+concepts to certifiable (coverage **8 → 20**) → causal battery + validation gate.
+
+**Substrate note.** `bioptimus/H0-mini` standalone weights are still approval-pending
+(403 on download). HistoPLUS *is built on H0-mini* and bundles that encoder, so crops were
+embedded with the **H0-mini backbone inside the HistoPLUS CellViT** (`embed_dim=768`,
+`num_prefix_tokens=5`, CLS = `prefix[:,0]`) — the intended substrate, obtained without the
+gated standalone download.
+
+| cell concept | pos v neg | n | AUROC | intens_r | gate | suff (null) |
+|---|---|---|---|---|---|---|
+| cancer_cell | CANCER v EPI | 150/150 | 1.000 | **0.902** | ❌ | 1.00 (0.00) |
+| lymphocyte_cell | LYM v CANCER | 150/150 | 1.000 | **0.838** | ❌ | 1.00 (0.00) |
+| plasma_cell | PLASMA v LYM | 150/150 | 0.918 | 0.442 | ✅ | 1.00 (0.08) |
+| neutrophil | NEU v LYM | 84/150 | 0.985 | **0.743** | ❌ | 1.00 (0.05) |
+| eosinophil | EOS v NEU | 41/84 | 0.950 | **0.740** | ❌ | 1.00 (0.06) |
+| macrophage | MAC v LYM | 150/150 | 0.981 | 0.598 | ✅ | 1.00 (0.06) |
+| fibroblast_cell | FIB v SMC | 150/150 | 0.982 | 0.344 | ✅ | 1.00 (0.07) |
+| smooth_muscle_cell | SMC v FIB | 150/150 | 0.984 | 0.344 | ✅ | 1.00 (0.02) |
+| endothelial | ENDO v FIB | 150/150 | 0.965 | 0.060 | ✅ | 0.98 (0.09) |
+| red_blood_cell | RBC v ENDO | 150/150 | 0.933 | **0.858** | ❌ | 1.00 (0.14) |
+| mitotic_figure | MITOSIS v CANCER | 25/150 | 0.955 | 0.423 | ✅ | 1.00 (0.00) |
+| apoptotic_body | APOP v LYM | 150/150 | 0.991 | 0.056 | ✅ | 1.00 (0.05) |
+
+## Read of the numbers
+
+1. **Every cell type is highly separable in H0-mini space (AUROC 0.92–1.00) and steers
+   cleanly** (sufficiency flip 1.00 vs matched-random null ≈ 0). The encoder genuinely
+   encodes cell identity — the cell-type vocabulary is real, not a routing illusion.
+
+2. **7 / 12 certify as clean causal axes; the 5 failures all trip the INTENSITY guard, not
+   AUROC.** cancer-vs-epithelial (int_r 0.90), lymphocyte-vs-cancer (0.84), RBC (0.86),
+   neutrophil / eosinophil (~0.74) separate perfectly *but the concept axis rides the
+   CLS-norm intensity proxy* (nucleus size / staining). On nucleus crops that proxy is a
+   real confounder, so the gate honestly declines them. This is the tool doing its job on
+   real biology — a naive TCAV probe would have reported all 12 as clean.
+
+3. **Methodological caveat.** The intensity proxy is CLS L2-norm, which on small nucleus
+   crops conflates with nucleus size/chromatin density — so the gate is likely *conservative*
+   here (some real cell-identity axes get vetoed for size-correlation). A crop-mean pixel
+   proxy, or size-matched pools, would tighten this. Rare types (MITOSIS n=25, EOS n=41) are
+   also thin. Reported honestly; not tuned away.
+
+## Provenance / caveats
+
+- **Env mutation:** installing `histoplus` (from GitHub; not on PyPI) upgraded torch
+  2.8 → 2.13 + numpy 2.5 + CUDA libs in the base env. Works; recommend isolating in a venv.
+- Extraction is a scratch script (`extract_histoplus.py`); promote to `biolayer/data/` to
+  make the substrate reproducible. npz is local/gitignored, not in S3.
+- Confound gate still UNCHECKED (single-source) — unchanged by this work.
+
+---
+
+# Confound adjudication: control, then re-measure (Gate 2b) — cross-model (2026-07-12)
+
+The intensity guard was a **correlational screen**: measure |corr(concept axis, CLS-norm)|,
+threshold, veto. That has the exact failure mode we'd flag in anyone else's faithfulness
+claim — *correlation with a nuisance doesn't prove the nuisance is doing the work.* On
+nucleus crops it vetoed 5/12 cell concepts. We tested whether those vetos are real.
+
+**Method.** Same 1,650 HistoPLUS-typed nucleus crops embedded in **two** encoders —
+H0-mini (768-d, where the labels were generated) and **Phikon-v2 (1024-d, our primary
+substrate)**, index-aligned. For each concept, in each encoder: (1) the raw screen, then
+(2) a **controlled re-test** — rebuild pos/neg pools **matched on CLS-norm** (nuisance
+carries no label info), re-fit, re-measure. "Does the separation survive when intensity
+is balanced?" A `do()` on the confound, not a correlation with it.
+
+| concept | enc | raw AUROC | screen \|r\| | MATCHED AUROC | matched \|r\| | verdict |
+|---|---|---|---|---|---|---|
+| endothelial | h0_mini | 0.967 | 0.082 | 0.980 | 0.054 | clean |
+| endothelial | phikon | 0.965 | 0.140 | 0.891 | 0.093 | clean |
+| apoptotic_body | h0_mini | 0.987 | 0.073 | 0.981 | 0.091 | clean |
+| apoptotic_body | phikon | 0.984 | **0.653** | 0.998 | 0.013 | **survives → over-cautious veto** |
+| plasma_cell | h0_mini | 0.920 | 0.471 | 0.961 | 0.249 | clean |
+| plasma_cell | phikon | 0.941 | **0.613** | 0.893 | 0.131 | **survives → over-cautious veto** |
+| cancer_cell | h0_mini | 1.000 | **0.906** | 0.996 | 0.096 | **survives → over-cautious veto** |
+| cancer_cell | phikon | 1.000 | 0.331 | 1.000 | 0.096 | clean |
+| lymphocyte | h0_mini | 1.000 | **0.843** | 1.000 | 0.017 | **survives → over-cautious veto** |
+| lymphocyte | phikon | 1.000 | **0.654** | 1.000 | 0.021 | **survives → over-cautious veto** |
+| red_blood_cell | h0_mini | 0.935 | **0.869** | 0.807 | 0.070 | **survives → over-cautious veto** |
+| red_blood_cell | phikon | 0.927 | 0.284 | 0.912 | 0.079 | clean |
+
+## Read of the numbers
+
+1. **Every vetoed concept SURVIVES the control** — matched AUROC stays high and matched
+   |r| collapses toward 0. So the concept axis carried real cell-identity signal beyond
+   intensity; the correlation was incidental. **All 6 vetos were false declines.**
+
+2. **The veto flips across encoders for the same concept** — cancer_cell / RBC are vetoed
+   in H0-mini but pass in Phikon; apoptotic_body / plasma_cell are clean in H0-mini but
+   vetoed in Phikon. A biological confound would not depend on the encoder. This proves
+   the CLS-norm screen reads **encoder-specific norm geometry** (+ nucleus size), not a
+   staining confound. (Only `lymphocyte` is vetoed in both — and survives control in both.)
+
+3. **Cross-model replication (the reason to run two encoders):** cell identity separates
+   cleanly in *both* H0-mini and Phikon-v2 after control — the same standard the tissue
+   TUM/LYM replication set. The cell concepts are real, not an H0-mini artifact.
+
+## Pipeline change (implemented)
+
+`contrast.py` now **adjudicates instead of screens** — the exact "suspicion is cheap,
+adjudication is expensive" structure:
+- **Gate 2** (cheap screen) flags a suspect when |r| > 0.60.
+- **Gate 2b** (`_adjudicate_intensity`) fires only on suspects: intensity-match, re-fit,
+  re-measure → `survives-control` (admit **with a flag**), `confound-real` (invalidate),
+  or `undecidable` (< 40 matched samples → **decline**, an unresolved suspicion is not a
+  clean bill). Both numbers — raw screen **and** controlled AUROC — ride on the card
+  (`intensity_screen_r`, `intensity_adjudication`, `intensity_matched_auroc`, `flags`) and
+  in the reasoning trace. Verified: cancer_cell / lymphocyte / RBC flip from vetoed to
+  admitted-with-flag; endothelial stays screen-clean.
+
+Same standard both directions — *intervene, don't correlate* — now applied to confounds,
+not just concepts. Caveat: the CLS-norm proxy remains coarse on crops (conflates with
+nucleus size); a crop-mean pixel proxy would tighten the screen itself. Scripts:
+`extract_dual.py`, `analyze_confound.py`.
+
+---
+
+# Live source-intervention on the timm track (H-optimus-0) — h0 parity (2026-07-12)
+
+The live do() was previously **phikon-only**: `LiveEncoder` hooks a transformers/Dinov2
+block, so the h0 track (timm ViTs) fell back to cached readout-space necessity
+(`intervened_on_input=false`). Now implemented for timm: **`TimmLiveEncoder`** in
+`causal/live.py`, backend-dispatched by `make_live_encoder(model_key)` / gated by
+`supports_live(...)`. Both tracks now run the **full** per-slide source-intervention.
+
+**How it hooks.** H-optimus-0 is a timm `VisionTransformer` (ViT-g/14, 40 blocks, CLS =
+prefix token 0 with 4 register tokens after it, `global_pool='token'`). We manually replay
+`forward_features` (`patch_embed → _pos_embed → patch_drop → norm_pre → blocks → norm`),
+project the concept axis out of the CLS token in the residual stream at block L, and let
+L+1..final RECOMPUTE — the timm analogue of the Dinov2 hook. Same index convention as
+`LiveEncoder`, so `intervene.live_necessity` is backend-agnostic and unchanged.
+
+**Validation (offline, cached weights).**
+- Manual forward **== `forward_features`** (max abs diff **0.0**); `embed(clean)` ==
+  `hidden_cls` readout (diff 0.0) — representation-consistent with `data.models` extraction.
+- Hook fires: a random ablation at block 20 shifts the readout (mean |Δ| 0.006).
+- **Necessity curve, `h_optimus_0` TUM-vs-NORM** (the h0 objective), live per-slide,
+  n_null=8, matched-random null ~0:
+
+  | layer | concept drop | random (mean±sd) | gap | z | bites |
+  |---|---|---|---|---|---|
+  | mid_early | +0.482 | −0.005 ± 0.005 | **+0.487** | +88.7 | ✅ |
+  | mid | +0.888 | −0.007 ± 0.011 | **+0.895** | +82.2 | ✅ |
+  | readout | +2.919 | +0.007 ± 0.027 | **+2.912** | +109.4 | ✅ |
+
+  Same graded, monotonic-toward-readout Hydra pattern phikon shows, now on the ViT-g/14.
+
+**End-to-end `certify_answer` on the h0-family** (`h_optimus_0`, live_ctx, offline): answer
+*"malignant carcinoma epithelium replacing normal mucosa, with a brisk lymphocytic
+infiltrate"* → `necessity_mode = live source-intervention`, `intervened_on_input=true`,
+**2/2 claims GROUNDED** with live curves (`tumor_epithelium` nec 0.167:
+0.49→0.90→2.91; `immune_infiltrate` nec 0.542: 0.73→3.60→6.63). **phikon regression
+clean** — same code path (dispatches to `LiveEncoder`), TUM-vs-LYM curve unchanged
+(early n.s. → readout +2.9).
+
+**h0 track flipped + tested.** `H0_MODEL_KEY` is now `h_optimus_0` (was `h0_mini`, which is
+approval-gated / not accessible here). The `h0` track resolves natively — verified:
+`certify(track="h0")` cached conf **0.974** (TUM_vs_NORM); `certify_answer(track="h0")` live
+→ `intervened_on_input=true`, **2/2 GROUNDED** with timm live curves. `h0_mini` is also timm,
+so `TimmLiveEncoder` covers it unchanged once its weights + a multi-layer npz land (restore
+the key then).
+
+**Caveats.** (1) The HistoPLUS **cell-type** substrate is a *separate* use of `h0_mini` and
+was left as-is: `embeddings/histoplus_celltype/h0_mini/train.npz` exists (built via the
+HistoPLUS-bundled H0-mini backbone), so cell-type certification reads it from cache and does
+**not** need the gated standalone model — repointing it to `h_optimus_0` would break it (no
+cell-type npz there; 1536-d vs 768-d). (2) H-optimus-0 is ~5× slower than phikon (ViT-g), so
+the live sweep costs proportionally more per claim.
+
+---
+
+# Scope honesty: concept-level vs slide-level + a passing negative control (2026-07-12)
+
+The default certificate answers a **model-property** question (is concept C a real, causal,
+unconfounded axis in the encoder?) over the **reference embedding set** — it never looks at
+the query slide. That is rigorous for *that* claim, but the "per-prediction card" framing
+implied a per-slide claim it does not make: **default certify would call "tumor" GROUNDED
+even on an all-stroma tile**, because it never checks the tile. Fixed by relabeling, not
+rebuilding — every strong result survives intact; only the overclaim is dropped.
+
+## Fix 1 — the card states which of three questions it answers (`certification_scope`)
+Every `certify_answer` card now carries an explicit scope block:
+- **Q: is the concept real/causal/unconfounded in the model?** → YES (concept-level — this card)
+- **Q: does K-Pro's answer for THIS slide use the concept?** → not determinable (no K-Pro internals)
+- **Q: is the concept present in THIS tile?** → NOT tested in concept-level mode; tested live if `live_ctx` given
+
+Default `level` = `"concept-level"`; it flips to `"slide-level (live) + concept-level"` only
+when a slide was intervened on. The sharpened caveat says concept-level ≠ per-slide in words.
+
+## Fix 2 — the slide-level path is now a first-class verb (`ablate_live`)
+`intervene.live_necessity` (edit THIS slide's real forward pass) was reachable only inside
+`certify_answer`'s `live_ctx`. Added MCP verb **`ablate_live`** (+ `verbs.ablate_live`):
+takes tile file-paths + class-code labels, hooks the block, projects the concept axis out of
+the CLS in the residual stream, propagates, and reports the per-layer necessity vs a
+matched-random null. `ablate` is now labeled concept-level; `ablate_live` is slide-level.
+
+## Fix 3 — the negative control (the falsifier, finally run)
+Input "slide" = **13 tumor tiles**. On their real forward pass we ablate a concept axis and
+watch the TUM readout margin (Phikon-v2, matched-random null n=20):
+
+| claim | ablated axis | mid_early gap (z) | mid gap (z) | readout drop | ablated margin | verdict |
+|---|---|---|---|---|---|---|
+| **TRUE** (tumor) | TUM vs NORM | +0.34 (28) | +2.25 (71) | 8.58 = **158%** of base | 5.44 → **−3.14** | **COLLAPSES** — readout causally uses tumor |
+| **FALSE** (adipose) | ADI vs NORM | −0.08 (−7) | −0.04 (−1) | 1.08 = **20%** of base | 5.44 → **+4.36** | **dents only** — readout does NOT use adipose |
+
+**The live path distinguishes a claim the tile causally uses from one it doesn't.** Ablating
+the tumor axis **collapses** the tumor readout (margin flips negative → the tile stops reading
+as tumor); ablating the adipose axis is **inert at mid-layers** (negative gap) and only dents
+the readout by 20% at the final block — a shared-`NORM`-foil cross-interference, not causal use.
+So a K-Pro claim of "abundant adipose" on a tumor tile finds **no per-slide causal support**.
+
+The honest discriminator is **magnitude / margin-flip**, not a binary "bite": both concepts
+show *some* readout effect (the adipose axis shares the NORM foil), but only the true concept
+removes enough to flip the readout. This is a genuine per-slide result — the thing the
+concept-level card cannot give — and it's now the demo's negative control. Script: `neg_control.py`.

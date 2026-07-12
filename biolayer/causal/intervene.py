@@ -95,7 +95,7 @@ def live_necessity(model_key, images, image_labels, class_names, pos="TUM", neg=
     cls_list = list(class_names)
     rpos, rneg = (readout_pos or pos), (readout_neg or neg)
     image_labels = np.asarray(image_labels)
-    enc = encoder or _live.LiveEncoder(model_key)
+    enc = encoder or _live.make_live_encoder(model_key)
 
     # Readout probe — live-fit on reference tiles (matched representation) preferred.
     if ref_images is not None:

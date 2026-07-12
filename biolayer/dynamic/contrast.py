@@ -27,17 +27,29 @@ class ContrastSet:
     n_neg: int
     # validation (all ride on the certificate)
     heldout_auroc: float          # probe generalizes off the fit split
-    intensity_collinearity: float # |corr(concept proj, CLS L2 norm)| — nuisance guard
+    intensity_collinearity: float # |corr(concept proj, CLS L2 norm)| — nuisance SCREEN
     valid: bool
     warnings: tuple
     source: str
+    # controlled adjudication of the intensity screen (Gate 2b) — all ride on the card
+    intensity_suspect: bool = False        # did the cheap screen fire?
+    matched_auroc: float = float("nan")    # held-out AUROC on intensity-matched pools
+    matched_intensity_collinearity: float = float("nan")
+    n_matched: int = 0
+    confound_adjudication: str = "screen-clean"  # screen-clean|survives-control|confound-real|undecidable
+    flags: tuple = ()             # non-invalidating annotations (admitted-with-flag)
 
 
 # A probe that separates the pools worse than this on held-out data isn't a real
 # concept axis. A concept projection that tracks the intensity proxy above the
-# second threshold is likely riding staining/brightness, not biology.
+# second threshold is a *suspect* — not a verdict: we then CONTROL for intensity and
+# re-measure (Gate 2b) rather than veto on the correlation alone.
 MIN_HELDOUT_AUROC = 0.75
 MAX_INTENSITY_COLLINEARITY = 0.60
+# Below this many intensity-matched samples the controlled re-test is unreliable, so an
+# unresolved suspicion is declined (not a clean bill of health).
+MIN_MATCHED = 40
+_MATCH_BINS = 12
 
 
 def _intensity_collinearity(X, y):
@@ -68,6 +80,53 @@ def _heldout_auroc(X, y, seed=0):
         return float("nan")
 
 
+def _intensity_match(X, y, seed=0, n_bins=_MATCH_BINS):
+    """Subsample pos/neg to a SHARED intensity (CLS-norm) distribution so the nuisance
+    carries no information about the label — the `do()` on the confound. Bin by norm
+    quantiles; in each bin keep min(n_pos, n_neg) from each side. Returns matched (X, y)."""
+    norms = np.linalg.norm(X, axis=1)
+    edges = np.quantile(norms, np.linspace(0, 1, n_bins + 1))
+    edges[-1] += 1e-6
+    rng = np.random.default_rng(seed)
+    keep = []
+    for i in range(n_bins):
+        b = np.where((norms >= edges[i]) & (norms < edges[i + 1]))[0]
+        pos, neg = b[y[b] == 1], b[y[b] == 0]
+        k = min(len(pos), len(neg))
+        if k:
+            keep += list(rng.choice(pos, k, replace=False))
+            keep += list(rng.choice(neg, k, replace=False))
+    keep = np.array(keep, dtype=int)
+    return X[keep], y[keep]
+
+
+def _adjudicate_intensity(X, y, coll, seed=0):
+    """Gate 2b: the intensity SCREEN fired (coll high). Don't veto on correlation —
+    control for intensity and re-measure. Returns
+    (adjudication, matched_auroc, matched_coll, n_matched, warnings, flags).
+
+    survives-control : matched separation holds -> admit WITH A FLAG (over-cautious veto)
+    confound-real    : separation collapses when intensity is balanced -> invalidate
+    undecidable      : too few matched samples to adjudicate -> decline (not a clean bill)
+    """
+    Xm, ym = _intensity_match(X, y, seed=seed)
+    n_matched = int(len(ym))
+    if n_matched < MIN_MATCHED or len(np.unique(ym)) < 2:
+        return ("undecidable", float("nan"), float("nan"), n_matched,
+                (f"intensity-suspect (|r|={coll:.2f}); only {n_matched} intensity-matched "
+                 f"samples (<{MIN_MATCHED}) — cannot adjudicate, declined",), ())
+    m_auroc = _heldout_auroc(Xm, ym, seed=seed)
+    m_coll = _intensity_collinearity(Xm, ym)
+    if m_auroc >= MIN_HELDOUT_AUROC:
+        return ("survives-control", m_auroc, m_coll, n_matched, (),
+                (f"intensity-suspect (screen |r|={coll:.2f}) but signal SURVIVES control: "
+                 f"intensity-matched AUROC={m_auroc:.3f} (n={n_matched}, matched |r|={m_coll:.2f}) "
+                 f"— admitted with flag",))
+    return ("confound-real", m_auroc, m_coll, n_matched,
+            (f"intensity confound REAL: matched AUROC {m_auroc:.3f} < {MIN_HELDOUT_AUROC} — "
+             f"separation collapses when intensity is balanced (screen |r|={coll:.2f})",), ())
+
+
 def assemble(claim, split="train", artifacts_dir=None, seed=0):
     """Build + validate the contrast pools for one claim from cached embeddings.
 
@@ -85,19 +144,32 @@ def assemble(claim, split="train", artifacts_dir=None, seed=0):
     X, y = _probe.select_pair(feats, labels, class_names, spec.pos, spec.neg)
     n_pos, n_neg = int((y == 1).sum()), int((y == 0).sum())
 
-    warnings = []
+    warnings, flags = [], []
+    # Gate 1 — is this a real axis at all? (thin pool / not separable)
     if min(n_pos, n_neg) < 20:
         warnings.append(f"thin pool (pos={n_pos}, neg={n_neg})")
     auroc = _heldout_auroc(X, y, seed=seed)
-    coll = _intensity_collinearity(X, y)
     if not (auroc >= MIN_HELDOUT_AUROC):
         warnings.append(f"held-out AUROC {auroc:.3f} < {MIN_HELDOUT_AUROC}")
-    if coll > MAX_INTENSITY_COLLINEARITY:
-        warnings.append(f"concept axis collinear with intensity proxy (|r|={coll:.2f})")
+
+    # Gate 2 — cheap correlational SCREEN against the intensity nuisance.
+    coll = _intensity_collinearity(X, y)
+    suspect = coll > MAX_INTENSITY_COLLINEARITY
+    adjudication, m_auroc, m_coll, n_matched = "screen-clean", float("nan"), float("nan"), 0
+    if suspect:
+        # Gate 2b — CONTROL for intensity and re-measure instead of vetoing on the
+        # correlation. "Does the separation survive when the nuisance is removed?"
+        (adjudication, m_auroc, m_coll, n_matched,
+         adj_warnings, adj_flags) = _adjudicate_intensity(X, y, coll, seed=seed)
+        warnings.extend(adj_warnings)
+        flags.extend(adj_flags)
 
     cs = ContrastSet(
         pos=spec.pos, neg=spec.neg, distractor=spec.distractor,
         n_pos=n_pos, n_neg=n_neg, heldout_auroc=auroc,
         intensity_collinearity=coll,
-        valid=(len(warnings) == 0), warnings=tuple(warnings), source=source)
+        valid=(len(warnings) == 0), warnings=tuple(warnings), source=source,
+        intensity_suspect=suspect, matched_auroc=m_auroc,
+        matched_intensity_collinearity=m_coll, n_matched=n_matched,
+        confound_adjudication=adjudication, flags=tuple(flags))
     return cs, feats, labels, class_names, source

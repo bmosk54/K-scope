@@ -27,13 +27,23 @@ def build_claim_trace(sc, cs, live, conf, bc):
     t = []
 
     # 1. probe / contrast validation ---------------------------------------
+    # cheap screen, then (if it fires) the controlled re-test — report both numbers.
+    _adj = getattr(cs, "confound_adjudication", "screen-clean")
+    intensity_txt = f"intensity screen |r|={cs.intensity_collinearity:.3f}"
+    if getattr(cs, "intensity_suspect", False):
+        intensity_txt += (f" -> SUSPECT; controlled re-test (intensity-matched): "
+                          f"AUROC={cs.matched_auroc:.3f}, |r|={cs.matched_intensity_collinearity:.3f}"
+                          f", n={cs.n_matched} -> {_adj}")
+    verdict = ("PASS" if cs.valid else "WARN: " + "; ".join(cs.warnings))
+    if cs.valid and getattr(cs, "flags", ()):
+        verdict += " (FLAGGED: " + "; ".join(cs.flags) + ")"
     t.append(_s(1, "contrast_validation",
-                f"held-out AUROC={cs.heldout_auroc:.3f}; intensity-collinearity "
-                f"|r|={cs.intensity_collinearity:.3f} (gate: AUROC>=0.75, |r|<=0.60) -> "
-                f"{'PASS' if cs.valid else 'WARN: ' + '; '.join(cs.warnings)}",
-                ("the pool separates the concept and the axis is not riding a "
-                 "staining/brightness proxy" if cs.valid else
-                 "the probe may be reading intensity, not biology — treat with caution")))
+                f"held-out AUROC={cs.heldout_auroc:.3f}; {intensity_txt} -> {verdict}",
+                ("the pool separates the concept and, where intensity was suspected, the "
+                 "signal SURVIVES a controlled re-test (matching removes the nuisance)"
+                 if cs.valid else
+                 "the separation does not survive controlling for intensity, or could not "
+                 "be adjudicated — treat with caution")))
 
     # 2. necessity (live or cached) ----------------------------------------
     if isinstance(live, dict) and live.get("curve"):

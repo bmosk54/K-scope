@@ -18,6 +18,7 @@ the certificate records `intervened_on_input: false` so it is never overstated.
 """
 from .. import config, tracks
 from ..causal import battery, confound, intervene
+from ..causal import live as _live
 from . import claims as _claims
 from . import concepts as _concepts
 from . import contrast as _contrast
@@ -27,6 +28,40 @@ from . import trace as _trace
 SCHEMA_VERSION = "dyn-0.2"
 CAVEAT = ("Certifies model-internal causal use of an answer's concept claims in the "
           "encoder's representation — NOT biological/clinical validity.")
+
+# The single most important honesty statement on the card: WHICH question it answers.
+CONCEPT_LEVEL_CLAIM = (
+    "CONCEPT-LEVEL: the concepts the answer invokes are ones this encoder genuinely "
+    "represents, uses causally, and that are not staining/batch artifacts. This is NOT a "
+    "per-slide / per-prediction claim — it does NOT verify the concept is present in any "
+    "specific input tile, and in the default (no live_ctx) mode it CANNOT catch a "
+    "per-slide hallucination such as 'tumor' asserted about a stroma tile.")
+SLIDE_LEVEL_CLAIM = (
+    "SLIDE-LEVEL (live source-intervention): necessity was measured by editing THIS "
+    "slide's real forward pass (intervened_on_input=true) — a per-slide causal read of "
+    "whether the readout depends on the concept axis.")
+
+
+def _scope(any_live):
+    """The card's explicit self-description: which of the three distinct questions it
+    answers, so the framing never outruns the evidence."""
+    return {
+        "level": "slide-level (live) + concept-level" if any_live else "concept-level",
+        "concept_level_claim": CONCEPT_LEVEL_CLAIM,
+        "slide_level_claim": (SLIDE_LEVEL_CLAIM if any_live else
+            "NOT RUN — no live_ctx provided. Pass live_ctx (this slide's tiles + a "
+            "reference set) for the per-slide, input-dependent necessity test."),
+        "questions": {
+            "is the concept real/causal/unconfounded in the model?":
+                "YES — this is what the concept-level card certifies",
+            "does K-Pro's answer for THIS slide use the concept?":
+                "not determinable here — no K-Pro internals",
+            "is the concept present in THIS tile?":
+                ("tested live per-slide (see slide_level_claim)" if any_live else
+                 "NOT tested in concept-level mode"),
+        },
+    }
+
 # Both assumptions printed on the card, not buried.
 ASSUMPTIONS = [
     "encoder-faithfulness: a latent do() moves the model's REPRESENTATION, not tissue "
@@ -69,13 +104,18 @@ def certify_answer(prompt, answer, track="phikon", split="train", n_null=200,
         # Necessity: LIVE source-intervention if a slide is supplied and the substrate
         # is hook-capable (transformers/phikon); else cached readout-space.
         live_nec, intervened, layered = None, False, None
-        if live_ctx and config.MODELS[cl.model_key]["backend"] == "transformers":
+        if live_ctx and _live.supports_live(cl.model_key):
             try:
+                # Reuse the resident/warm encoder — never cold-load weights per call.
+                enc = live_ctx.get("encoder")
+                if enc is None:
+                    from .. import serving as _serving
+                    enc = _serving.warm_encoder(cl.model_key)
                 ln = intervene.live_necessity(
                     cl.model_key, live_ctx["images"], live_ctx["image_labels"], class_names,
                     pos=spec.pos, neg=spec.neg, ref_images=live_ctx["ref_images"],
                     ref_labels=live_ctx["ref_labels"], n_null=live_ctx.get("n_null", 12),
-                    encoder=live_ctx.get("encoder"), artifacts_dir=artifacts_dir)
+                    encoder=enc, artifacts_dir=artifacts_dir)
                 if ln.get("status") == "live_source_intervention":
                     live_nec, intervened, any_live = ln, True, True
                 else:
@@ -116,6 +156,8 @@ def certify_answer(prompt, answer, track="phikon", split="train", n_null=200,
         "prompt": prompt, "answer": answer,
         "track": t.name, "preferred_substrate": t.model_key, "split": split,
         "coverage": coverage,
+        # WHICH question this card answers — concept-level unless a slide was intervened on.
+        "certification_scope": _scope(any_live),
         "concept_vocabulary": _concepts.coverage_summary(t.model_key, split),
         "claims": [_render(c) for c in certified],
         "not_certifiable": skipped,
@@ -172,8 +214,17 @@ def _render(c):
         "contrast_validation": {
             "pos": cs.pos, "neg": cs.neg, "n_pos": cs.n_pos, "n_neg": cs.n_neg,
             "heldout_auroc": round(cs.heldout_auroc, 3),
-            "intensity_collinearity": round(cs.intensity_collinearity, 3),
-            "valid": cs.valid, "warnings": list(cs.warnings)},
+            # intensity: report BOTH the cheap screen AND the controlled re-test
+            "intensity_screen_r": round(cs.intensity_collinearity, 3),
+            "intensity_suspect": cs.intensity_suspect,
+            "intensity_adjudication": cs.confound_adjudication,
+            "intensity_matched_auroc": (None if cs.matched_auroc != cs.matched_auroc
+                                        else round(cs.matched_auroc, 3)),
+            "intensity_matched_r": (None if cs.matched_intensity_collinearity
+                                    != cs.matched_intensity_collinearity
+                                    else round(cs.matched_intensity_collinearity, 3)),
+            "n_matched": cs.n_matched,
+            "valid": cs.valid, "warnings": list(cs.warnings), "flags": list(cs.flags)},
         "notes": sc.notes,
         # deterministic, instant — the auditable "why this score, why this verdict"
         "reasoning_trace": _trace.build_claim_trace(sc, cs, c.get("live"), c["confound"],

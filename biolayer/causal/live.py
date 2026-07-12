@@ -33,15 +33,19 @@ def project_out(direction):
 class LiveEncoder:
     """Frozen transformers ViT with an ablation hook. phikon-family (Dinov2) only."""
 
-    def __init__(self, model_key="phikon_v2"):
+    def __init__(self, model_key="phikon_v2", local_files_only=False):
         spec = config.MODELS[model_key]
         if spec["backend"] != "transformers":
             raise NotImplementedError(
                 f"live hook implemented for transformers ViT (phikon); {model_key} is "
                 f"{spec['backend']} — timm live hooks are a follow-on.")
         from transformers import AutoImageProcessor, AutoModel
-        self.processor = AutoImageProcessor.from_pretrained(spec["hf_id"], use_fast=True)
-        self.model = AutoModel.from_pretrained(spec["hf_id"]).to(DEVICE).eval()
+        # local_files_only=True -> load purely from the HF cache, zero network (no
+        # re-download, not even a metadata HEAD). Non-sticky, unlike HF_HUB_OFFLINE.
+        self.processor = AutoImageProcessor.from_pretrained(
+            spec["hf_id"], use_fast=True, local_files_only=local_files_only)
+        self.model = AutoModel.from_pretrained(
+            spec["hf_id"], local_files_only=local_files_only).to(DEVICE).eval()
         self.blocks = self.model.encoder.layer
         self.dim = spec["dim"]
         self.n_blocks = len(self.blocks)
@@ -87,3 +91,106 @@ class LiveEncoder:
     def hidden_cls(self, images, batch_size=32):
         """One clean pass -> (readout CLS (N, dim), per-layer CLS (N, n_blocks+1, dim))."""
         return self._forward(images, None, None, batch_size, want_all=True)
+
+
+class TimmLiveEncoder:
+    """Frozen timm ViT (H-optimus-0 / H0-mini) with a residual-stream ablation hook.
+
+    Same do() contract as LiveEncoder, for the timm backend. We manually replay
+    `forward_features` (patch_embed -> _pos_embed -> patch_drop -> norm_pre -> blocks
+    -> norm) so we can (a) capture the CLS token after every block and (b) project a
+    direction out of the CLS token in the residual stream at block L and let
+    L+1..final RECOMPUTE. CLS is prefix token 0 (H-optimus carries 4 register tokens
+    after it); the readout is the global_pool='token' CLS = norm(tokens)[:, 0], which
+    matches `data.models` extraction (verified: manual == forward_features, diff 0.0).
+
+    Index convention mirrors LiveEncoder so `intervene.live_necessity` is backend-
+    agnostic: hidden_cls returns (N, n_blocks+1, dim) with index i = CLS after i
+    blocks (index 0 = post pos-embed), and embed(edit, block_idx) edits the output of
+    block `block_idx` — so clean_hidden[:, L] pairs with block_idx = L-1 as before.
+    """
+
+    def __init__(self, model_key="h_optimus_0"):
+        spec = config.MODELS[model_key]
+        if spec["backend"] != "timm":
+            raise NotImplementedError(
+                f"TimmLiveEncoder is for timm ViTs; {model_key} is {spec['backend']} "
+                f"(use LiveEncoder for transformers).")
+        import timm
+
+        kw = dict(spec.get("timm_kwargs", {}))
+        if kw.get("mlp_layer") == "SwiGLUPacked":
+            kw["mlp_layer"] = timm.layers.SwiGLUPacked
+        if kw.get("act_layer") == "SiLU":
+            kw["act_layer"] = torch.nn.SiLU
+        self.model = timm.create_model(
+            f"hf-hub:{spec['hf_id']}", pretrained=True, **kw).to(DEVICE).eval()
+        from timm.data import create_transform, resolve_data_config
+        self.transform = create_transform(
+            **resolve_data_config(self.model.pretrained_cfg, model=self.model))
+        self.blocks = self.model.blocks
+        self.n_blocks = len(self.blocks)
+        self.dim = spec["dim"]
+
+    def _prep(self, images):
+        return torch.stack([self.transform(im.convert("RGB")) for im in images]).to(DEVICE)
+
+    def _tokens_in(self, x):
+        m = self.model
+        t = m.patch_embed(x)
+        t = m._pos_embed(t)           # prepends CLS(+registers) + pos embed
+        t = m.patch_drop(t)           # Identity on H-optimus
+        t = m.norm_pre(t)             # Identity on H-optimus
+        return t
+
+    @torch.inference_mode()
+    def _run(self, x, edit=None, block_idx=None, capture=False):
+        use_amp = DEVICE.type == "cuda"
+        with torch.autocast(device_type=DEVICE.type, dtype=torch.float16, enabled=use_amp):
+            t = self._tokens_in(x)
+            cls = [t[:, 0]] if capture else None       # index 0 = post pos-embed
+            for i, blk in enumerate(self.blocks):
+                t = blk(t)
+                if edit is not None and i == block_idx:  # ablate CLS in residual stream
+                    t = edit(t)
+                if capture:
+                    cls.append(t[:, 0])                # index i+1 = after block i
+            readout = self.model.norm(t)[:, 0]         # global_pool='token' readout CLS
+        if capture:
+            return readout, torch.stack(cls, dim=1)    # (B,dim), (B,n_blocks+1,dim)
+        return readout
+
+    def embed(self, images, edit=None, block_idx=None, batch_size=32):
+        """Readout CLS (N, dim), optionally under an ablation hook at block_idx."""
+        outs = []
+        for i in range(0, len(images), batch_size):
+            x = self._prep(images[i:i + batch_size])
+            outs.append(self._run(x, edit, block_idx, capture=False).float().cpu().numpy())
+        return np.concatenate(outs, axis=0)
+
+    def hidden_cls(self, images, batch_size=32):
+        """One clean pass -> (readout CLS (N, dim), per-layer CLS (N, n_blocks+1, dim))."""
+        fin, alls = [], []
+        for i in range(0, len(images), batch_size):
+            x = self._prep(images[i:i + batch_size])
+            r, a = self._run(x, capture=True)
+            fin.append(r.float().cpu().numpy())
+            alls.append(a.float().cpu().numpy())
+        return np.concatenate(fin, axis=0), np.concatenate(alls, axis=0)
+
+
+def supports_live(model_key):
+    """True if a live source-intervention encoder exists for this model's backend."""
+    return config.MODELS[model_key]["backend"] in ("transformers", "timm")
+
+
+def make_live_encoder(model_key="phikon_v2", local_files_only=False):
+    """Backend-dispatched live encoder: Dinov2/transformers -> LiveEncoder, timm ViT
+    (H-optimus / H0-mini) -> TimmLiveEncoder. `local_files_only` (transformers) loads
+    purely from the HF cache with no network call."""
+    backend = config.MODELS[model_key]["backend"]
+    if backend == "transformers":
+        return LiveEncoder(model_key, local_files_only=local_files_only)
+    if backend == "timm":
+        return TimmLiveEncoder(model_key)
+    raise NotImplementedError(f"no live encoder for backend {backend!r} ({model_key})")
