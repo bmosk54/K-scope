@@ -11,12 +11,14 @@ confound controls.
 
 ## Load order for context
 
-1. **[STRATEGY.md](STRATEGY.md)** — hypothesis, prior-art scan, feasibility red-team,
-   hackathon scope decision. Read this to understand *why* the project exists and where
-   the defensible wedge is.
-2. **[RESULTS.md](RESULTS.md)** — the substrate-transfer insights we're building on:
-   what to expect from necessity vs sufficiency on a pathology FM, and why the confound
-   gate is the differentiator.
+0. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the single system map: pipeline,
+   module layout, compute/infra, and the document index. Start here.
+1. **[docs/STRATEGY.md](docs/STRATEGY.md)** — hypothesis, prior-art scan, feasibility
+   red-team, hackathon scope decision. Read this to understand *why* the project exists
+   and where the defensible wedge is.
+2. **[docs/RESULTS.md](docs/RESULTS.md)** — the substrate-transfer insights we're building
+   on: what to expect from necessity vs sufficiency on a pathology FM, and why the
+   confound gate is the differentiator.
 
 ## Current scope decision
 

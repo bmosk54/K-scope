@@ -17,9 +17,11 @@ pip install -r requirements.txt
 ```
 
 ## 3. Hugging Face auth (only needed for gated models: H-optimus-0, H0-mini)
-Not stored in git. On the new box:
+Not stored in git. `hf auth login` now supports a **browser/OAuth flow** (huggingface_hub
+1.x) — run it and pick "Login from your browser"; it caches the token to
+`~/.cache/huggingface/`:
 ```bash
-hf auth login          # paste a token from hf.co/settings/tokens (read scope)
+hf auth login          # browser OAuth (or --token for a manual PAT)
 ```
 Accept model terms once in the browser:
 - H-optimus-0: https://huggingface.co/bioptimus/H-optimus-0  (gated=auto, instant)
@@ -27,18 +29,37 @@ Accept model terms once in the browser:
 
 Phikon-v2 is ungated — no login required.
 
+> Local dev shortcut: the workspace VSCode terminal profile auto-exports `HF_TOKEN`
+> (read live from the HF cache), `SAGEMAKER_ROLE_ARN`, and the AWS session creds, and
+> activates `owkin-env` — a fresh terminal is ready with no manual steps.
+
 ## 4. AWS / S3
-Auth is the SageMaker execution role (no keys). Verify:
+Local auth: workspace session creds (`.owkin_hack_aws.sh`, gitignored). On a SageMaker
+box: the execution role. Verify:
 ```bash
 aws sts get-caller-identity
-aws s3 ls s3://bucketbiolayer
+aws s3 ls s3://bucketbiolayer            # read/write for the team (bucket policy grants it)
 ```
-> NOTE: the current execution role has **ListBucket only** — no Get/PutObject on
-> `bucketbiolayer`. Until that role policy is fixed, embeddings can't go through
-> S3. They are **not** committed to git (`artifacts/`, `*.npz` are gitignored —
-> too large/binary for the shared baseline); regenerate them locally with the
-> `--no-upload` extractor below. Once the role is fixed, `--upload` + `s3_utils`
-> become the shared channel.
+Two shared stores:
+- **`s3://bucketbiolayer`** (object storage) — **read/write** for the team accounts via
+  its bucket policy (`GetObject`/`PutObject`/`DeleteObject`/`ListBucket`). Holds
+  `embeddings/`, `directions/`, `sae/`, `certificates/`, and SageMaker `sagemaker/code`
+  + `sagemaker/output`. `--upload` + `biolayer.data.s3_utils` are the shared channel;
+  `*.npz`/`artifacts/` stay gitignored (too large/binary for git).
+- **`h0-vector`** — an **S3 Vectors** store
+  (`arn:aws:s3vectors:us-west-2:528759081002:bucket/h0-vector`, team-granted
+  `PutVectors`/`QueryVectors`/…). Destination for tile/slide embeddings → the
+  biodiscovery retrieval layer.
+
+## 4b. GPU on SageMaker — CLI only (no Studio/UI)
+H-optimus-0 (ViT-g/14) needs a GPU. Run it as a **SageMaker Training Job** via boto3 —
+role + token are already wired (see the shortcut above):
+```bash
+python deploy/sagemaker/launch.py                 # pretrained H-optimus-0 on ml.g5.2xlarge
+python deploy/sagemaker/launch.py --pretrained 0 --instance-type ml.m5.large   # CPU smoke test
+aws sagemaker describe-training-job --training-job-name <name> --query TrainingJobStatus --output text
+```
+Details + status in [../deploy/sagemaker/README.md](../deploy/sagemaker/README.md).
 
 ## 5. Reproduce
 
@@ -78,4 +99,4 @@ feats, labels, class_names, src = loader.load("phikon_v2", "train")
 Xg, *_ = loader.load_layer("phikon_v2", "train", layer="mid", space="global")
 Xl, *_ = loader.load_layer("phikon_v2", "train", layer="readout", space="local")
 ```
-(When the S3 role is fixed, use `biolayer.data.s3_utils.load_embeddings("phikon_v2", "train")` instead.)
+(Or pull the shared copy from S3: `biolayer.data.s3_utils.load_embeddings("phikon_v2", "train")` — `bucketbiolayer` is read/write for the team, so `--upload` publishes and this reads back.)

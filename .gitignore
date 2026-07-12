@@ -9,3 +9,4 @@ artifacts/
 *.pt
 s3inline.json
 Eddie.md
+.env.aws.sh

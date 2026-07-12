@@ -52,6 +52,60 @@ def serving_status():
     return serving.status()
 
 
+def embed(images=None, s3_tiles=None, slide_s3=None, keys=None, push_index=None,
+          slide_name="query", endpoint=None, region=None, max_tiles=16, mpp=0.5,
+          filters=None, vector_bucket_arn=None):
+    """On-demand H-optimus-0 embedding via the WARM SageMaker endpoint (external trigger).
+
+    The one live path into the frozen substrate: give NEW tile bytes / S3 tile keys / a
+    slide URI and get back the 1536-d CLS vector(s) without the 4 GB model re-download the
+    training-job path incurs per call. Optionally push straight into the h0-vector index
+    (`push_index`) so a fresh query tile becomes queryable next to the cohort. Provide
+    exactly one source. Degrades to status='unavailable' (never raises) if the endpoint
+    isn't deployed — deploy with `python deploy/sagemaker/deploy_endpoint.py`.
+    """
+    import base64
+    import json as _json
+    import os as _os
+
+    ep = endpoint or _os.environ.get("HOPTIMUS_ENDPOINT", "hoptimus-embed")
+    rgn = region or _os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
+    payload = {}
+    if images is not None:
+        payload["images"] = [b if isinstance(b, str) else base64.b64encode(b).decode() for b in images]
+        if keys:
+            payload["keys"] = keys
+    elif s3_tiles is not None:
+        payload["s3_tiles"] = s3_tiles
+    elif slide_s3 is not None:
+        payload.update(slide_s3=slide_s3, max_tiles=max_tiles, mpp=mpp,
+                       filters=filters or ["whitespace", "tissue"])
+    else:
+        return {"verb": "embed", "status": "bad_request",
+                "note": "give one of images | s3_tiles | slide_s3"}
+    if push_index:
+        push = {"index": push_index, "slide": slide_name}
+        if vector_bucket_arn:
+            push["bucket_arn"] = vector_bucket_arn
+        payload["push"] = push
+
+    try:
+        import boto3
+        rt = boto3.client("sagemaker-runtime", region_name=rgn)
+        resp = rt.invoke_endpoint(EndpointName=ep, ContentType="application/json",
+                                  Body=_json.dumps(payload).encode())
+        out = _json.loads(resp["Body"].read())
+        out["verb"] = "embed"
+        out.setdefault("status", "ok")
+        out["endpoint"] = ep
+        return out
+    except Exception as e:  # endpoint absent / not InService / auth — degrade, don't crash
+        return {"verb": "embed", "status": "unavailable", "endpoint": ep,
+                "error": type(e).__name__,
+                "note": f"endpoint not reachable ({e}); deploy it with "
+                        "`python deploy/sagemaker/deploy_endpoint.py`"}
+
+
 def _resolve(track, model, pos, neg):
     """A track name fills in model + concept + distractor; else use the args."""
     if track is not None:
