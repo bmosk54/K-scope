@@ -22,8 +22,8 @@
 (function () {
   "use strict";
 
-  const V = { GROUNDED: "#3ddc97", WEAK: "#e8b23e", NOT_CERTIFIABLE: "#7a7fa0" };
-  const NULLC = "#7a7fa0";          // matched-random null trace/band
+  const V = { GROUNDED: "#12916A", WEAK: "#B5852A", NOT_CERTIFIABLE: "#8C8577" };
+  const NULLC = "#8C8577";          // matched-random null trace/band
   const EPS = 1e-6;
 
   const API_BASE = (window.API_BASE ||
