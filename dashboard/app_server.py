@@ -213,11 +213,13 @@ def api_autoresearch():
     n_null = _int("n_null", 60, 20, 300)
     bedrock = request.args.get("bedrock", "0") in ("1", "true", "True")
     live = request.args.get("live", "0") in ("1", "true", "True")
+    screen = request.args.get("screen", "0") in ("1", "true", "True")
 
     def gen():
         try:
             for rec in _autoresearch.iterate(problem, track=track, max_iters=iters,
-                                             n_null=n_null, use_bedrock=bedrock, live=live):
+                                             n_null=n_null, use_bedrock=bedrock, live=live,
+                                             screen=screen):
                 yield f"data: {json.dumps(rec, default=str)}\n\n"
         except Exception as e:
             traceback.print_exc()

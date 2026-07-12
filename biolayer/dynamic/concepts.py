@@ -50,10 +50,13 @@ TISSUE = LabelSource(
     ("phikon_v2", "h_optimus_0"),
     "NCT-CRC-HE 9 tissue classes (tile-level)")
 
+# Substrates ORDER = resolution preference. phikon_v2 first so cell probes certify on the
+# NON-GATED phikon-v2 re-embedding of the HistoPLUS nucleus crops (labels from CellViT/
+# H0-mini detection; probing on frozen phikon-v2). h0_mini kept as a fallback substrate.
 CELL = LabelSource(
     "histoplus_celltype", config.HISTOPLUS_SLUG, tuple(config.HISTOPLUS_CLASSES),
-    ("h0_mini",),
-    "HistoPLUS 13 TME cell types (nucleus-level, CellViT on H0-mini)")
+    ("phikon_v2", "h0_mini"),
+    "HistoPLUS 13 TME cell types (nucleus-level; CellViT/H0-mini detection, probed on phikon-v2)")
 
 SOURCES = {s.name: s for s in (TISSUE, CELL)}
 

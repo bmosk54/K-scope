@@ -66,28 +66,85 @@ def _pillar(name, statistic, null, effect, confidence, passed, verdict, raw):
             "verdict": verdict, "raw": raw}
 
 
-def build_pillars(bc, chance=0.5):
+# On cleanly separable concepts the readout probe is ~1-D, so projecting out its OWN axis
+# collapses accuracy to chance TAUTOLOGICALLY -> readout necessity saturates at 1.0 and
+# carries no information (CLAUDE.md: necessity is redundancy-limited, only "bites" near the
+# readout). So (a) prefer a live/layer-resolved source-intervention curve when one is
+# present (graded, per-slide, discriminating), else (b) cap the readout-only necessity so a
+# tautological collapse cannot prop the score up to ~1.
+READOUT_ONLY_NECESSITY_CAP = 0.5
+
+# An UNCHECKED confound gate (single-source data) means biological validity is unverified;
+# a model-internal-only certificate must not read near-certain. Scale the headline down
+# until multi-site site-probe data exists. See STRATEGY.md — the confound gate is the wedge.
+UNCHECKED_CONFOUND_FACTOR = 0.7
+
+
+def _necessity_confidence(n, chance, live=None, layered=None):
+    """(confidence, basis). Graded per-slide necessity when a REAL source-intervention curve
+    is present (one that bites before the readout); else the readout ablation, capped and
+    flagged redundancy-limited because a 1-D-probe project-out is near-tautological."""
+    for src in (live, layered):
+        curve = src.get("curve") if isinstance(src, dict) else None
+        if curve and all("necessity_gap" in c for c in curve):
+            readout = next((c["necessity_gap"] for c in curve if c.get("layer") == "readout"), None)
+            pre = [c["necessity_gap"] for c in curve if c.get("layer") != "readout"]
+            if readout and readout > 1e-6 and pre:
+                # graded: fraction of the readout necessity already irreversible BEFORE the
+                # readout. Low => the concept is recomputed downstream until the last layer
+                # (redundancy-limited / Hydra effect); high => it bites early = truly necessary.
+                return _clip01(max(pre) / readout), "live source-intervention (pre-readout / readout)"
+    eff = (n["random_ablated_acc_mean"] - n["concept_ablated_acc"]) / \
+          max(n["random_ablated_acc_mean"] - chance, 1e-6)
+    return _clip01(min(eff, READOUT_ONLY_NECESSITY_CAP)), "readout-only (redundancy-limited, capped)"
+
+
+# In dim ~1024, two unrelated axes are near-orthogonal by default (cos ~ 0.05 -> 1-cos ~
+# 0.95), so a raw geometric "1-cos" specificity is close to what a RANDOM distractor scores.
+# Credit only orthogonality above that baseline -> a realistic band instead of a flat ~0.95.
+SPEC_ORTH_BASELINE = 0.85
+
+
+def _calibrate_sufficiency(s):
+    """Graded sufficiency: steering-AUC (mean flip over push strengths) minus its matched-
+    random-null AUC. Falls back to the raw full-width flip-rate effect if AUC is absent."""
+    if "steering_auc" in s:
+        return _clip01(s["steering_auc"] - s.get("random_steering_auc", 0.0))
+    return _clip01(s["concept_flip_rate"] - s["random_flip_rate_mean"])
+
+
+def _calibrate_specificity(orth, intact):
+    """Orthogonality credited only above the random-distractor baseline, gated by how intact
+    the target probe stays. Maps the near-chance geometric 1-cos into a realistic band."""
+    above = (orth - SPEC_ORTH_BASELINE) / (1.0 - SPEC_ORTH_BASELINE)   # 0 at baseline, 1 at perfect
+    return _clip01(0.6 + 0.35 * above) * _clip01(intact)
+
+
+def build_pillars(bc, chance=0.5, live=None, layered=None):
     """Normalize the raw battery card into the three composable pillars."""
     n, s = bc["necessity_readout"], bc["sufficiency_steering"]
     sp = bc.get("specificity", {})
 
-    nec_eff = (n["random_ablated_acc_mean"] - n["concept_ablated_acc"]) / \
-              max(n["random_ablated_acc_mean"] - chance, 1e-6)
+    nec_conf, nec_basis = _necessity_confidence(n, chance, live=live, layered=layered)
     necessity = _pillar(
         "necessity",
         statistic=n["concept_ablated_acc"], null=n["random_ablated_acc_mean"],
         effect=n["random_ablated_acc_mean"] - n["concept_ablated_acc"],
-        confidence=nec_eff,
+        confidence=nec_conf,
         passed=n["concept_ablated_acc"] <= chance + 0.05,
-        verdict=n["verdict"], raw=n)
+        verdict=n["verdict"], raw={**n, "necessity_basis": nec_basis})
 
-    suff_eff = s["concept_flip_rate"] - s["random_flip_rate_mean"]
+    # Sufficiency: the full-class-width flip rate saturates at 1.0 on any separable concept.
+    # Use the graded steering-AUC (mean flip over push strengths 0..1 class-widths) vs its
+    # matched-random-null AUC — a calibrated "steering efficiency" that sits in a realistic
+    # band. Raw flip stays in .raw.
+    suff_conf = _calibrate_sufficiency(s)
     sufficiency = _pillar(
         "sufficiency",
         statistic=s["concept_flip_rate"], null=s["random_flip_rate_mean"],
-        effect=suff_eff, confidence=suff_eff,
+        effect=s["concept_flip_rate"] - s["random_flip_rate_mean"], confidence=suff_conf,
         passed=s["concept_flip_rate"] > 0.5 and s["random_flip_rate_mean"] < 0.1,
-        verdict=s["verdict"], raw=s)
+        verdict=s["verdict"], raw={**s, "sufficiency_basis": "graded steering-AUC (raw flip in .concept_flip_rate)"})
 
     if "target_acc_after_distractor_ablation" in sp:
         intact = sp["target_acc_after_distractor_ablation"] / max(sp["base_acc"], 1e-6)
@@ -95,9 +152,9 @@ def build_pillars(bc, chance=0.5):
         specificity = _pillar(
             "specificity",
             statistic=sp["target_acc_after_distractor_ablation"], null=sp["base_acc"],
-            effect=orth, confidence=_clip01(intact) * _clip01(orth),
+            effect=orth, confidence=_calibrate_specificity(orth, intact),
             passed=sp["target_acc_after_distractor_ablation"] > sp["base_acc"] - 0.05,
-            verdict=sp["verdict"], raw=sp)
+            verdict=sp["verdict"], raw={**sp, "specificity_basis": "orthogonality above random baseline (raw 1-cos in .effect)"})
     else:
         specificity = None
     return {"necessity": necessity, "sufficiency": sufficiency, "specificity": specificity}
@@ -126,6 +183,11 @@ def compute_confidence(pillars, bc, confound_result, chance=0.5):
         checked, factor = False, 1.0
 
     overall = 0.0 if not integrity else _clip01(base * factor)
+    # Honest cap: while the confound gate is UNCHECKED (single-source data), biology is
+    # unverified, so the headline cannot read near-certain — scale it down.
+    unchecked_cap = integrity and not checked
+    if unchecked_cap:
+        overall = _clip01(overall * UNCHECKED_CONFOUND_FACTOR)
     return {
         "overall": overall,
         "pillars": per,
@@ -133,8 +195,13 @@ def compute_confidence(pillars, bc, confound_result, chance=0.5):
         "null_integrity_reasons": reasons,
         "confound_checked": checked,
         "confound_factor": factor,
-        "method": "geomean(necessity, sufficiency, specificity) x confound_factor, "
-                  "zeroed if the matched-random null is not inert",
+        "confound_uncertainty_capped": bool(unchecked_cap),
+        "unchecked_confound_factor": UNCHECKED_CONFOUND_FACTOR if unchecked_cap else 1.0,
+        "method": "geomean(necessity, sufficiency, specificity) x confound_factor, zeroed "
+                  "if the matched-random null is not inert; necessity is redundancy-limited "
+                  f"(readout-only capped at {READOUT_ONLY_NECESSITY_CAP}); overall x"
+                  f"{UNCHECKED_CONFOUND_FACTOR} while the confound gate is UNCHECKED "
+                  "(single-source: biological validity unverified)",
         "interpretation": ("high = concept axis is necessary AND sufficient AND specific, "
                            "with an inert random null and no site confound"),
     }
@@ -258,7 +325,7 @@ def certify(feats, labels, class_names, pos, neg, distractor, model_key, split,
                                         artifacts_dir=artifacts_dir)
 
     chance = 0.5
-    pillars = build_pillars(bc, chance=chance)
+    pillars = build_pillars(bc, chance=chance, layered=layered)
     confidence = compute_confidence(pillars, bc, {"confound_gate": confound_result}, chance)
     trace = reasoning_trace(bc, pillars, confidence, {"confound_gate": confound_result})
     reuse = persist_handles(handles, model_key, split, pos, neg, artifacts_dir)

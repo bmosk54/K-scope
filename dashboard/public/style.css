@@ -510,6 +510,19 @@ body[data-view="research"] .empty-state { display: none !important; }
 body[data-view="research"] #view-research { display: block; }
 .no-card #view-research.active { display: block !important; }
 
+/* -------- Slide Gallery view: self-contained page embedded inline (keeps its own
+   color scheme); behaves like every other section — no console, no claim-strip,
+   shows with or without a certify card. -------- */
+body[data-view="gallery"] .console,
+body[data-view="gallery"] .claim-strip { display: none; }
+body[data-view="gallery"] .empty-state { display: none !important; }
+body[data-view="gallery"] #view-gallery { display: block; }
+.no-card #view-gallery.active { display: block !important; }
+.gallery-frame {
+  width: 100%; height: calc(100vh - 120px); border: 1px solid var(--border);
+  border-radius: 10px; background: var(--panel); display: block;
+}
+
 /* ---- Prompt console: certify score + reasoning-trace boxes-with-arrows ---- */
 .c-trace { margin-top: 12px; background: #0b0e1c; border: 1px solid #232946;
   border-radius: 10px; padding: 12px 14px; }

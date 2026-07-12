@@ -944,6 +944,7 @@
     proof: { title: "Proof", tag: "necessity × sufficiency × specificity, and where the axis came from" },
     verdict: { title: "Verdict", tag: "certified claim, confound check, honest coverage" },
     research: { title: "AutoResearch", tag: "autonomous causal-circuit discovery — probe · certify · locate · ablate · reflect" },
+    gallery: { title: "Slide Gallery", tag: "whole-slide patch gallery — patches ranked by concept axis" },
   };
 
   function goToView(id) {

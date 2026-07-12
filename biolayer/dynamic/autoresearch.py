@@ -112,6 +112,39 @@ def _live_circuit(model_key, pos_class, n_null=8, n_tiles=10):
         return None
 
 
+def _region_screen(model_key, pos_class, pos, neg, artifacts_dir, grid_side=7, n_random=16):
+    """SCREEN — spatial CRISPR knockout: mask each tissue region of a real pos tile one at
+    a time, re-forward the whole tile, and measure the readout-margin collapse vs a
+    matched-random-REGION null (screen.py). Turns the loop's ablation from "which concept
+    AXIS is necessary" (global to the tile) into "WHERE in the tile the readout causally
+    reads from". Returns a screen card, or None on any failure (no GPU / no HF token /
+    handles not persisted / unsupported backend) so the loop degrades exactly like the
+    live circuit does.
+    """
+    try:
+        import numpy as np
+        from .. import config, serving
+        from ..causal import certify as _certify, screen as _screen
+        if pos_class not in config.CLASS_NAMES:
+            return None
+        handles = _certify.load_direction(model_key, pos, neg, artifacts_dir)
+        enc = serving.warm_encoder(model_key)
+        ref = serving.reference(model_key)
+        labs = np.asarray(ref["labels"])
+        ci = config.CLASS_NAMES.index(pos_class)
+        idx = np.where(labs == ci)[0][:6]
+        if len(idx) < 1:
+            return None
+        pos_images = [ref["images"][int(i)] for i in idx]
+        card = _screen.screen_concept(enc, pos_images, handles,
+                                      grid_side=grid_side, m_random=n_random)
+        if card:
+            card["concept"] = f"{pos}_vs_{neg}"
+        return card
+    except Exception:
+        return None
+
+
 def _first_probe(problem, class_names, use_bedrock):
     """Design the opening probe for the problem (Sonnet), else a registry tissue contrast."""
     if use_bedrock:
@@ -159,13 +192,19 @@ def _fresh_probe(class_names, seen):
 
 
 def iterate(problem, track="phikon", max_iters=5, n_null=60, use_bedrock=True,
-            split="train", converge_score=0.95, live=False):
+            split="train", converge_score=0.95, live=False, screen=False):
     """Yield one research record per iteration of the autonomous causal loop.
 
     Stops after `max_iters`, or early once two consecutive iterations both land a
     GROUNDED verdict above `converge_score` (the circuit is nailed down). With `live=True`
     the circuit is measured by a real per-slide source-intervention (graded, honest);
     it falls back to the cached readout-space curve if the live path is unavailable.
+
+    With `screen=True` each iteration also runs the spatial CRISPR knockout screen
+    (`_region_screen`): mask each tissue region of a real pos tile one at a time,
+    re-forward, and rank regions by the readout-margin collapse vs a matched-random-
+    region null — i.e. WHERE in the tile the readout causally reads from, not just which
+    axis. It degrades to None (field left absent) if the live substrate is unavailable.
     """
     from .. import tracks as _tracks
     model = _tracks.get(track).model_key
@@ -202,6 +241,8 @@ def iterate(problem, track="phikon", max_iters=5, n_null=60, use_bedrock=True,
         if not circuit:
             circuit = _circuit_from_card(card)
         axis = _load_axis(circuit)
+        # SCREEN — spatial CRISPR knockout on a real tile (WHERE the readout reads from).
+        region_screen = _region_screen(model, pos, pos, neg, loader.ARTIFACTS_DIR) if screen else None
         suf_ok = pillars.get("sufficiency", {}).get("passed", False)
         spec_ok = pillars.get("specificity", {}).get("passed", False)
         integrity = bool(conf.get("null_integrity", True))
@@ -242,6 +283,7 @@ def iterate(problem, track="phikon", max_iters=5, n_null=60, use_bedrock=True,
                          f"{axis['layer']}: probe {axis['probe_acc']:.3f} -> "
                          f"{axis['concept_ablated_acc']:.3f} (random null {axis['random_ablated_acc']:.3f})"),
             },
+            "region_screen": region_screen,
             "diagnosis": reflection.get("diagnosis"),
             "weakest_pillar": reflection.get("weakest_pillar"),
             "next_hypothesis": reflection.get("next_hypothesis"),
