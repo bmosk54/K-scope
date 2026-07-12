@@ -89,6 +89,14 @@
     const v = document.getElementById("strip-verdict");
     v.className = "strip-verdict " + claim.verdict;
     v.textContent = claim.verdict;
+    // per-claim substrate provenance (substrate · label_source · CLS-width) — tagged at
+    // the claim level, since different claims certify in different latents.
+    const subEl = document.getElementById("strip-substrate");
+    if (subEl) {
+      const tag = claim.substrate_tag ||
+        (claim.substrate ? claim.substrate + (claim.substrate_dim ? " · " + claim.substrate_dim + "-d" : "") : "");
+      subEl.textContent = tag;
+    }
     // Caption reflects the actual declines, not a hardcoded "cell/subcellular" assumption.
     const declEl = document.getElementById("strip-declined");
     declEl.textContent = declinedCount ? `+ ${declinedCount} declined` : "";
@@ -239,25 +247,30 @@
 
     const g = svg.append("g").attr("class", "hm-overlay").style("display", overlayOn ? null : "none");
     const norm = hm.norm_grid || [];
+    const zg = hm.z_grid || [];            // SIGNED: >=0 leans toward POS concept, <0 toward NEG
     const MAX_DARK = 0.74;                 // dimmest patch is veiled, never fully black
-    let topR = 0, topC = 0, topV = -1;
+    const POS = "255,95,95", NEG = "90,150,255";   // warm = toward pos concept, cool = toward neg
     for (let r = 0; r < S; r++) {
       for (let c = 0; c < S; c++) {
         const v = (norm[r] && norm[r][c]) || 0;
-        if (v > topV) { topV = v; topR = r; topC = c; }
-        // spotlight: a patch keeps the tile's REAL color where it aligns with the concept
-        // axis; the less it aligns, the heavier the dark-grey veil (opacity ∝ 1 − importance).
+        const toward = ((zg[r] && zg[r][c]) || 0) >= 0 ? POS : NEG;
+        // dark veil dims the patches that carry the axis weakly...
         g.append("rect")
           .attr("x", c * CELL).attr("y", r * CELL)
           .attr("width", CELL + 0.4).attr("height", CELL + 0.4)
-          .attr("fill", "#0b0a12")
-          .attr("fill-opacity", MAX_DARK * (1 - v));
+          .attr("fill", "#0b0a12").attr("fill-opacity", MAX_DARK * (1 - v));
+        // ...and the strong ones get a warm/cool tint by WHICH POLE they lean toward
+        g.append("rect")
+          .attr("x", c * CELL).attr("y", r * CELL)
+          .attr("width", CELL + 0.4).attr("height", CELL + 0.4)
+          .attr("fill", `rgb(${toward})`).attr("fill-opacity", 0.5 * v);
       }
     }
 
-    // ring the single most concept-carrying patch — left fully un-veiled (real color)
+    // ring the strongest toward-concept patch (hm.top_patch)
+    const tp = hm.top_patch || 0, tr = Math.floor(tp / S), tc = tp % S;
     g.append("rect")
-      .attr("x", topC * CELL).attr("y", topR * CELL)
+      .attr("x", tc * CELL).attr("y", tr * CELL)
       .attr("width", CELL).attr("height", CELL)
       .attr("fill", "none").attr("stroke", "#ffe08a").attr("stroke-width", 1.4);
 
@@ -278,31 +291,32 @@
         `<span class="hm-layer">readout layer · ${hm.n_patches || S * S} patches</span>` +
       `</div>` +
       `<div class="hm-head-right">` +
-        `<span class="hm-z ${strong ? "hot" : "flat"}">top-patch z ${(+hm.top_z).toFixed(1)} vs null</span>` +
+        `<span class="hm-z ${strong ? "hot" : "flat"}">◉ → ${hm.top_dir ? hm.top_dir.label : (hm.pos_label || hm.pos)}</span>` +
         `<button class="hm-toggle" id="hm-toggle">${overlayOn ? "hide" : "show"} overlay</button>` +
       `</div>`;
     container.prepend(head);
     const btn = head.querySelector("#hm-toggle");
     btn.addEventListener("click", () => { overlayOn = !overlayOn; renderHistology(); });
 
-    // z legend under the tile
+    // diverging legend: which pole each patch leans toward (the two ends of THIS axis)
+    const posL = hm.pos_label || hm.pos, negL = hm.neg_label || hm.neg;
     const leg = document.createElement("div");
     leg.className = "hm-legend";
     leg.innerHTML =
-      `<span class="hm-leg-lab">shaded = low · clear = high</span>` +
-      `<span class="hm-leg-bar"></span>` +
-      `<span class="hm-leg-lab">z ${hm.z_min} → ${hm.z_max}</span>`;
+      `<span class="hm-leg-lab" style="color:#7fb0ff">◀ ${negL}</span>` +
+      `<span class="hm-leg-bar" style="background:linear-gradient(90deg,#5a7bd6,#0b0a12 50%,#e06a6a)"></span>` +
+      `<span class="hm-leg-lab" style="color:#ff8a8a">${posL} ▶</span>`;
     container.appendChild(leg);
 
+    const shareStr = Object.entries(hm.hot_share || {})
+      .map(([k, n]) => `${n}× ${k}`).join(", ") || "—";
     document.getElementById("case-caption").innerHTML =
-      `<b>${claim.claim}</b> — real NCT-CRC ${hm.pos} tile. Each cell is one 16px patch: it keeps the ` +
-      `tile's real color where its readout-layer activation aligns with the <b>${hm.pos} vs ${hm.neg}</b> ` +
-      `concept axis, and is veiled darker the less it does (z-scored against ${hm.n_null} matched-random directions). ` +
-      (strong
-        ? `The concept <b>singles out specific patches above the null</b> (top-z ${(+hm.top_z).toFixed(1)}) — ` +
-          `a measured saliency map, not a schematic.`
-        : `No patch clears the null here — reported honestly.`) +
-      ` <span class="hm-caveat">Projection saliency on the model's representation; the faithful ` +
+      `<b>${claim.claim}</b> — real NCT-CRC ${hm.pos} tile. Each 16px patch is tinted by which pole of the ` +
+      `<b>${hm.pos} vs ${hm.neg}</b> axis its readout activation leans toward ` +
+      `(<span style="color:#ff8a8a">warm = ${posL}</span>, <span style="color:#7fb0ff">cool = ${negL}</span>), ` +
+      `and darkened where it carries the axis weakly (magnitude z-scored vs ${hm.n_null} matched-random directions). ` +
+      `The ringed ◉ top patch leans <b>${hm.top_dir ? hm.top_dir.label : posL}</b>; hottest-8 lean: ${shareStr}. ` +
+      `<span class="hm-caveat">Projection saliency on the model's representation; the faithful ` +
       `mask-and-recompute variant is the live source-intervention behind the necessity curve.</span>`;
   }
 

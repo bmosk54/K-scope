@@ -102,9 +102,11 @@ def build_claim_trace(sc, cs, live, conf, bc):
                 f"{cs.pos}, vs {s_raw.get('random_flip_rate_mean', 0):.2f}±"
                 f"{s_raw.get('random_flip_rate_std', 0):.2f} for {nnull} matched-random unit "
                 f"directions injected at the same α. score={suf.score:.3f}.",
-                ("a concept-specific steering axis — but near-circular (inject the "
-                 "class-mean-diff axis, score a probe built on it), so reported as a "
-                 "caveated SECONDARY; necessity + specificity carry the verdict")))
+                ("a concept-specific steering axis, de-circularized by the matched-random "
+                 "null (random directions injected at the same α do not flip) — but on its "
+                 "own still near-circular (inject the class-mean-diff axis, score a probe "
+                 "built on it), so it can NOT ground a GROUNDED verdict alone: a genuine "
+                 "necessity (live or non-readout) plus specificity must carry it")))
 
     # 4. specificity -------------------------------------------------------
     cos = sp_raw.get("cos_with_concept_axis")
@@ -152,6 +154,9 @@ def build_claim_trace(sc, cs, live, conf, bc):
     caps = []
     if getattr(sc, "contrast_capped", False):
         caps.append("contrast failed the validation gate")
+    if getattr(sc, "necessity_capped", False):
+        caps.append("no genuine necessity (readout-only, near-tautological) — near-circular "
+                    "sufficiency alone can't ground")
     if sc.confounded and sc.verdict != "GROUNDED":
         caps.append("site-confound flag")
     cap_str = f" (CAPPED at WEAK: {', '.join(caps)})" if caps else ""

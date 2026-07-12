@@ -70,6 +70,44 @@ def concept_axis(name_pos, name_neg):
     return axis / (np.linalg.norm(axis) + 1e-12)
 
 
+# Human labels for the NCT-CRC tissue classes we resolve a patch's direction against
+# (BACK/background excluded — not a tissue of interest).
+CLASS_LABEL = {
+    "ADI": "adipose", "DEB": "debris/necrosis", "LYM": "immune (lymphocytes)",
+    "MUC": "mucus", "MUS": "muscle", "NORM": "normal mucosa",
+    "STR": "stroma", "TUM": "tumor epithelium",
+}
+
+
+def class_directions():
+    """Standardized class centroids from readout feats. Standardizing (mu/sd from the CLS
+    feature stats) puts patch tokens and the class centroids in one comparable space, so a
+    patch's nearest centroid is a meaningful tissue call despite the patch<->CLS shift."""
+    d = np.load(EMB, allow_pickle=True)
+    feats, labels = d["feats"], d["labels"]
+    cls = list(d["class_names"])
+    mu, sd = feats.mean(0), feats.std(0) + 1e-6
+    names, cents = [], []
+    for name in CLASS_LABEL:
+        if name in cls:
+            c = (feats[labels == cls.index(name)].mean(0) - mu) / sd   # standardized centroid
+            names.append(name)
+            cents.append(c / (np.linalg.norm(c) + 1e-12))
+    return names, np.stack(cents), mu, sd      # (C, D) unit centroid dirs
+
+
+def patch_directions(grid, class_names, cents, mu, sd):
+    """Per-patch dominant tissue: standardize the patch into CLS space, then take the
+    nearest class centroid by cosine. Returns (dominant class-index, softmax confidence)."""
+    P = (grid - mu) / sd                                   # patch -> CLS-standardized space
+    P = P / (np.linalg.norm(P, axis=1, keepdims=True) + 1e-9)
+    sim = P @ cents.T                                      # (P, C) cosine to each centroid
+    dom = sim.argmax(1)
+    e = np.exp((sim - sim.max(1, keepdims=True)) * 6.0)    # sharpen for a readable confidence
+    conf = (e / e.sum(1, keepdims=True))[np.arange(len(dom)), dom]
+    return dom, conf
+
+
 def load_phikon():
     from transformers import AutoImageProcessor, AutoModel
     spec = config.MODELS["phikon_v2"]
@@ -97,22 +135,43 @@ def main():
     out = {}
     for spec in CONCEPTS:
         axis = concept_axis(spec["pos"], spec["neg"])
+        pos_lbl = CLASS_LABEL.get(spec["pos"], spec["pos"])
+        neg_lbl = CLASS_LABEL.get(spec["neg"], spec["neg"])
         tiles = by_class[spec["pos"]]
-        # Pick the tile whose patches most strongly single out the concept above the
-        # null (highest top_z) -> the most honestly discriminating heatmap to show.
+
+        # SIGNED importance: patch·axis is + when the patch leans toward the POS concept and
+        # - when it leans toward the NEG concept; |·| z-scored vs the matched-random null is
+        # the importance. So each patch has a magnitude (how concept-carrying) AND a direction
+        # (which pole). Pick the tile with the strongest TOWARD-CONCEPT (positive) peak, so the
+        # highlighted patches genuinely lean toward the concept the heatmap is about.
         best = None
         for i, tile in enumerate(tiles):
             grid = patch_grid(tile)
             imp = attribution.patch_importance(grid, axis, n_null=N_NULL, seed=SEED)
-            if best is None or imp["top_z"] > best[1]["top_z"]:
-                best = (i, imp, tile)
-        idx, imp, tile = best
-        z = np.asarray(imp["z"])
-        s = int(round(len(z) ** 0.5))
-        grid2d = z.reshape(s, s)
-        # publish a [0,1]-normalised grid for the overlay + the raw z stats for labels
-        lo, hi = float(z.min()), float(z.max())
-        norm = (grid2d - lo) / (hi - lo + 1e-9)
+            zsigned = np.asarray(imp["z"]) * np.sign(np.asarray(imp["scores"]))
+            peak = float(zsigned.max())          # strongest toward-POS-concept patch
+            if best is None or peak > best[0]:
+                best = (peak, i, imp, tile, zsigned)
+        peak, idx, imp, tile, zsigned = best
+        s = int(round(len(zsigned) ** 0.5))
+        signed = zsigned.reshape(s, s)           # diverging: + toward pos, - toward neg
+        mag = np.abs(signed)
+        lo, hi = float(mag.min()), float(mag.max())
+        norm = (mag - lo) / (hi - lo + 1e-9)     # 0..1 importance (drives the veil)
+
+        flat = signed.ravel()
+        top_patch = int(np.argmax(flat))         # most toward-concept patch (the ringed one)
+
+        def _dir(p):
+            v = float(flat[p]); toward = spec["pos"] if v >= 0 else spec["neg"]
+            return {"patch": int(p), "row": int(p // s), "col": int(p % s),
+                    "toward": toward, "label": CLASS_LABEL.get(toward, toward),
+                    "pole": "pos" if v >= 0 else "neg", "z": round(v, 2)}
+        order = np.argsort(-mag.ravel())          # patches by importance magnitude
+        hot = [int(p) for p in order[:8]]
+        hot_dirs = [_dir(p) for p in hot]
+        from collections import Counter
+        share = Counter(h["toward"] for h in hot_dirs)   # e.g. {"TUM":6,"NORM":2}
 
         png = f"{spec['concept']}.png"
         tile.save(os.path.join(OUT_DIR, png))
@@ -120,21 +179,27 @@ def main():
             "concept": spec["concept"],
             "label": spec["label"],
             "pos": spec["pos"], "neg": spec["neg"],
+            "pos_label": pos_lbl, "neg_label": neg_lbl,
             "tile": f"heatmaps/{png}",
             "grid_side": s,
-            "z_grid": np.round(grid2d, 3).tolist(),      # raw per-patch importance z
-            "norm_grid": np.round(norm, 4).tolist(),      # [0,1] for the overlay alpha
-            "z_min": round(lo, 3), "z_max": round(hi, 3),
+            "z_grid": np.round(signed, 3).tolist(),      # SIGNED per-patch z (+pos / -neg)
+            "norm_grid": np.round(norm, 4).tolist(),      # [0,1] importance magnitude -> veil
+            "z_min": round(float(signed.min()), 3), "z_max": round(float(signed.max()), 3),
             "top_z": round(float(imp["top_z"]), 2),
-            "top_patch": int(imp["top_patch"]),
+            "top_patch": top_patch,
             "n_patches": int(imp["n_patches"]),
             "n_null": N_NULL,
             "verdict": imp["verdict"],
             "layer": "readout",
             "tile_index": int(idx),
+            # which pole each highlighted patch leans toward (the two ends of THIS axis)
+            "top_dir": _dir(top_patch),                  # the ringed patch's direction
+            "hot_dirs": hot_dirs,                         # top-8 by importance + their lean
+            "hot_share": dict(share),                    # {class: count} among the hottest
         }
         print(f"  {spec['concept']:18} tile#{idx:2d}  top_z={imp['top_z']:6.2f}  "
-              f"-> {imp['verdict']}", flush=True)
+              f"top patch -> {out[spec['concept']]['top_dir']['label']}  "
+              f"lean {dict(share)}", flush=True)
 
     with open(os.path.join(OUT_DIR, "heatmaps.json"), "w") as f:
         json.dump(out, f, indent=2)

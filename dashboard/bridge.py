@@ -41,6 +41,10 @@ def adapt_card(card):
             "id": _slug(c.get("claim")),
             "claim": c.get("claim"),
             "concept": c.get("concept"),
+            # per-claim substrate provenance (substrate · label_source · CLS-width) so the
+            # UI tags each claim's latent instead of a single global header.
+            "substrate": c.get("substrate"), "label_source": c.get("label_source"),
+            "substrate_dim": c.get("substrate_dim"), "substrate_tag": c.get("substrate_tag"),
             "contrast": (f'{cv.get("pos")} vs {cv.get("neg")}' if cv.get("pos") else None),
             # keep the raw axis codes so the Studio can query the live layer field per claim
             "pos": cv.get("pos"), "neg": cv.get("neg"),
@@ -59,6 +63,7 @@ def adapt_card(card):
             },
             "confounded": c.get("confounded", False),
             "contrast_capped": not cv.get("valid", True),
+            "necessity_capped": c.get("necessity_capped", False),
             "survives_multiple_comparisons": c.get("survives_multiple_comparisons"),
             "reasoning_trace": c.get("reasoning_trace", []),
             "notes": c.get("notes", []),
