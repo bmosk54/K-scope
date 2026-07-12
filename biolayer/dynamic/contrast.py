@@ -68,15 +68,19 @@ def _heldout_auroc(X, y, seed=0):
         return float("nan")
 
 
-def assemble(track, claim, split="train", artifacts_dir=None, seed=0):
+def assemble(claim, split="train", artifacts_dir=None, seed=0):
     """Build + validate the contrast pools for one claim from cached embeddings.
 
-    Returns (ContrastSet, feats, labels, class_names, source) so the caller can run
-    the existing battery on the full arrays (which re-select the pos/neg pool).
+    Loads from the substrate + label source the claim RESOLVED to (tissue on
+    Phikon/H-optimus, cell types on H0-mini), not a fixed track. Returns
+    (ContrastSet, feats, labels, class_names, source) so the caller can run the
+    existing battery on the full arrays (which re-select the pos/neg pool).
     """
     spec = claim.spec
-    kw = {} if artifacts_dir is None else {"artifacts_dir": artifacts_dir}
-    feats, labels, class_names, source = loader.load(track.model_key, split, **kw)
+    kw = {"dataset_slug": claim.dataset_slug}
+    if artifacts_dir is not None:
+        kw["artifacts_dir"] = artifacts_dir
+    feats, labels, class_names, source = loader.load(claim.model_key, split, **kw)
 
     X, y = _probe.select_pair(feats, labels, class_names, spec.pos, spec.neg)
     n_pos, n_neg = int((y == 1).sum()), int((y == 0).sum())

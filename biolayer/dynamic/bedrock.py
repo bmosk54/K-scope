@@ -103,3 +103,63 @@ class ClaudeBedrock:
                         "concept": c if c in vocab else None,
                         "polarity": r.get("polarity", "present")})
         return [o for o in out if o["text"]]
+
+    def narrate(self, compact):
+        """One batched call: deterministic traces -> short plain-English glosses.
+
+        Returns {"per_claim": {concept: sentence}, "overall": str}. The numbers and
+        verdicts come from the deterministic trace; the LLM only phrases them — it must
+        not invent or change any verdict.
+        """
+        if not self.available():
+            raise RuntimeError(f"bedrock unavailable: {self._err}")
+        system = (
+            "You explain a causal-certification card to a pharma-governance reviewer. You "
+            "are given deterministic per-claim reasoning traces (numbers + verdicts already "
+            "computed). Phrase each claim's verdict in ONE plain sentence grounded in its "
+            "trace, and write ONE overall sentence. Do NOT invent or change any verdict, "
+            "score, or number. Output ONLY JSON: "
+            "{\"per_claim\": {\"<concept>\": \"<sentence>\"}, \"overall\": \"<sentence>\"}.")
+        user = json.dumps(compact)
+        text = self._invoke(system, user, max_tokens=1200)
+        start, end = text.find("{"), text.rfind("}")
+        return json.loads(text[start:end + 1]) if start != -1 else {"overall": text.strip()}
+
+    def propose_hypothesis(self, summary, max_tokens=1200):
+        """Reflect on a certify card (score + reasoning trace) -> the NEXT hypothesis.
+
+        Given the universal confidence, per-pillar verdicts, the deterministic reasoning
+        trace, and the substrate's class vocabulary, propose (a) a diagnosis of which
+        pillar is weak/strong and why, (b) the next causal hypothesis worth testing, (c) a
+        concrete follow-up probe over the available classes, and (d) a short message to
+        feed downstream to K-Pro or another Claude so the loop continues. Never decides
+        certifiability — the deterministic battery re-checks any probe proposed. Raises on
+        any failure so the caller can fall back to the deterministic heuristic.
+        """
+        if not self.available():
+            raise RuntimeError(f"bedrock unavailable: {self._err}")
+        system = (
+            "You are a computational-pathology interpretability researcher running an "
+            "ITERATIVE certify loop on a frozen pathology foundation model. You are given a "
+            "causal-certification card: a universal confidence score in [0,1], per-pillar "
+            "verdicts (necessity / sufficiency / specificity), a deterministic reasoning "
+            "trace (the numbers behind the score), and the substrate's tissue-class "
+            "vocabulary. Read the SCORE and the TRACE, diagnose which pillar is weakest and "
+            "why, then propose the NEXT hypothesis to test and one concrete follow-up probe "
+            "(a pos/neg contrast + a specificity distractor over ONLY the provided class "
+            "codes) that would sharpen or falsify it. Prefer a tighter, matched foil over an "
+            "easy one (never BACK/empty). Also write a short message to feed downstream to "
+            "K-Pro (the pathology model) or another Claude so the loop continues. You NEVER "
+            "decide certifiability — the deterministic battery re-checks any probe you "
+            "propose. Output ONLY a JSON object: {\"diagnosis\": <one sentence grounded in "
+            "the trace numbers>, \"weakest_pillar\": <\"necessity\"|\"sufficiency\"|"
+            "\"specificity\">, \"next_hypothesis\": <one sentence>, \"proposed_probe\": "
+            "{\"concept\": <snake_case>, \"pos\": <code>, \"neg\": <code>, \"distractor\": "
+            "[<code>, <code>], \"rationale\": <one clause>}, \"message_to_downstream\": <one "
+            "or two sentences>, \"feed_to\": <\"kpro\"|\"claude\">}.")
+        user = json.dumps(summary)
+        text = self._invoke(system, user, max_tokens=max_tokens)
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError("no JSON object in model response")
+        return json.loads(text[start:end + 1])

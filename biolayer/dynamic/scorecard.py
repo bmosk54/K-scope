@@ -49,6 +49,7 @@ class ClaimScore:
     confounded: bool
     intervened_on_input: bool
     survives_correction: bool = False   # set by Holm pass over the answer
+    contrast_capped: bool = False       # verdict capped because the contrast failed the gate
     notes: list = field(default_factory=list)
 
     @property
@@ -57,14 +58,37 @@ class ClaimScore:
         return min(ps) if ps else 1.0
 
 
-def _necessity(bc, layered):
-    """Numeric + z from readout necessity; effect taken as the max over layers."""
+def _necessity_live(live):
+    """Necessity from a LIVE source-intervention curve (edit @ layer L on the real
+    forward pass, margin-drop vs matched-random null). This is the graded, per-slide
+    read — GROUNDED requires biting at a NON-readout layer (genuine distributed
+    necessity), since readout-only ablation ~= projecting out the probe's own axis.
+    Score = fraction of the readout-necessity that is already irreversible before the
+    readout (how little the model recomputes it)."""
+    curve = live["curve"]
+    readout_gap = max((c["necessity_gap"] for c in curve if c["layer"] == "readout"),
+                      default=0.0)
+    non_ro = [c for c in curve if c["layer"] != "readout"]
+    best = max(non_ro, key=lambda c: c["gap_vs_null_z"]) if non_ro else curve[-1]
+    gap, z = best["necessity_gap"], best["gap_vs_null_z"]
+    score = _clip01(gap / readout_gap) if readout_gap > 1e-6 else _clip01(gap)
+    v = GROUNDED if (z >= Z_CRIT and gap > 0) else (WEAK if gap > 0 else NULL)
+    ps = PillarScore("necessity", score, float(gap), float(z), _p_from_z(z), True, v)
+    return ps, best["layer"], True
+
+
+def _necessity(bc, layered, live=None):
+    """Numeric + z for necessity. If a live source-intervention curve is present, use
+    it (graded, per-slide); else fall back to the cached readout necessity (capped WEAK
+    at the readout — near-tautological)."""
+    if isinstance(live, dict) and live.get("curve"):
+        ps, bites_layer, _ = _necessity_live(live)
+        return ps, bites_layer
     n = bc["necessity_readout"]
     chance = 0.5
     eff = (n["random_ablated_acc_mean"] - n["concept_ablated_acc"]) / \
           max(n["random_ablated_acc_mean"] - chance, 1e-6)
     z = n["concept_vs_null_z"]
-    # layer-resolved: keep the best-biting layer for honesty (usually the readout).
     bites_layer = "readout"
     if isinstance(layered, dict) and layered.get("curve"):
         gaps = [(c["random_ablated_acc_mean"] - c["concept_ablated_acc"], c["layer"])
@@ -73,11 +97,6 @@ def _necessity(bc, layered):
             bites_layer = max(gaps)[1]
     score = _clip01(eff)
     p = _p_from_z(z)
-    # Readout-space necessity is near-tautological: projecting the class-mean-diff
-    # out one layer below the readout is projecting out the probe's own axis
-    # (Bio-Interp: readout collapse leaking upward). Genuine distributed necessity
-    # requires biting at a NON-readout layer. So readout-only necessity is capped at
-    # WEAK (redundancy-limited), no matter how large z is.
     if bites_layer == "readout":
         v = WEAK if eff > 0.0 else NULL
     else:
@@ -113,9 +132,14 @@ def _specificity(bc):
     return PillarScore("specificity", score, float(orth), float("nan"), 1.0, False, v)
 
 
-def score_claim(concept, bc, layered, confound_result, intervened_on_input=False):
-    """Assemble one claim's numeric scores + per-pillar and rolled-up verdicts."""
-    nec, bites_layer = _necessity(bc, layered)
+def score_claim(concept, bc, layered, confound_result, intervened_on_input=False,
+                live_necessity=None, contrast_valid=True, contrast_warnings=()):
+    """Assemble one claim's numeric scores + per-pillar and rolled-up verdicts.
+
+    If `live_necessity` (a live source-intervention curve) is present, the necessity
+    pillar is the graded per-slide read and `intervened_on_input` should be True.
+    """
+    nec, bites_layer = _necessity(bc, layered, live=live_necessity)
     suf = _sufficiency(bc)
     spec = _specificity(bc)
     pillars = {p.name: p for p in (nec, suf, spec)}
@@ -123,14 +147,19 @@ def score_claim(concept, bc, layered, confound_result, intervened_on_input=False
     cf = confound_result.get("confound_gate", confound_result)
     confounded = bool(cf.get("confounded", False))
 
-    notes = [f"necessity is redundancy-limited: bites at layer {bites_layer} "
-             f"(mid-network ablation is recomputed downstream — Hydra effect)"]
+    if live_necessity and live_necessity.get("curve"):
+        notes = [f"necessity via LIVE source-intervention (edit @ layer on this slide's "
+                 f"forward pass): bites from layer {bites_layer}; readout drop dominates, "
+                 f"early layers partly recomputed (redundancy resolved, not degenerate)"]
+    else:
+        notes = [f"necessity is redundancy-limited: bites at layer {bites_layer} "
+                 f"(cached readout-space; live source-intervention is the real read)"]
     if cf.get("status") != "ok":
         notes.append("confound gate UNAVAILABLE (single-source data) — biological "
                      "validity not established")
     if not intervened_on_input:
         notes.append("certified on reference-set separability, NOT on this input's "
-                     "forward pass — live-hook intervention is the pending upgrade")
+                     "forward pass — pass live_ctx for the per-slide intervention")
 
     # Roll-up: sufficiency is the clean, load-bearing signal on this substrate;
     # necessity is reported honestly as redundancy-limited and does not veto.
@@ -144,9 +173,20 @@ def score_claim(concept, bc, layered, confound_result, intervened_on_input=False
         verdict = WEAK
         notes.append("capped at WEAK: causal axis overlaps a site/scanner signature")
 
+    # SAFETY CAP: a contrast that fails the validation gate (low held-out AUROC, or an
+    # axis riding the staining/intensity proxy) may separate perfectly yet certify the
+    # wrong thing. It must NEVER read GROUNDED — cap at WEAK regardless of the pillars.
+    contrast_capped = False
+    if not contrast_valid and verdict == GROUNDED:
+        verdict = WEAK
+        contrast_capped = True
+        notes.append("capped at WEAK: contrast failed validation ("
+                     + "; ".join(contrast_warnings)
+                     + ") — the probe may ride staining/intensity, not clean biology")
+
     return ClaimScore(concept=concept, pillars=pillars, verdict=verdict,
                       confounded=confounded, intervened_on_input=intervened_on_input,
-                      notes=notes)
+                      contrast_capped=contrast_capped, notes=notes)
 
 
 def holm_correction(claim_scores, alpha=0.05):

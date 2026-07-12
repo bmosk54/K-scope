@@ -87,3 +87,97 @@ def _extract_json_array(text):
     if start != -1 and end != -1 and end > start:
         return json.loads(text[start:end + 1])
     raise ValueError("no JSON array in model response")
+
+
+# ---------------------------------------------------------------------------
+# Close the loop: certify card (score + reasoning trace) -> the NEXT hypothesis
+# ---------------------------------------------------------------------------
+def _summarize_card(certificate, class_names):
+    """Distill a `certify` card into the compact reflection input: score, per-pillar
+    verdicts, the deterministic reasoning trace, and the available class vocabulary."""
+    conf = certificate.get("confidence", {}) or {}
+    pill = {}
+    for name, p in (certificate.get("pillars", {}) or {}).items():
+        if p:
+            pill[name] = {"confidence": p.get("confidence"), "verdict": p.get("verdict"),
+                          "effect": p.get("effect"), "passed": p.get("passed")}
+    return {
+        "current_concept": certificate.get("prediction", {}).get("concept"),
+        "overall_score": conf.get("overall"),
+        "null_integrity": conf.get("null_integrity"),
+        "confound_checked": conf.get("confound_checked"),
+        "pillars": pill,
+        "reasoning_trace": certificate.get("reasoning_trace"),
+        "available_classes": {c: CLASS_GLOSS.get(c, "?") for c in class_names},
+    }
+
+
+def _sanitize_probe(probe, class_names):
+    """Keep the LLM honest: a proposed probe must reference real, distinct classes."""
+    cset = set(class_names)
+    if not isinstance(probe, dict):
+        return None
+    pos, neg = probe.get("pos"), probe.get("neg")
+    if pos not in cset or neg not in cset or pos == neg:
+        probe["valid"] = False
+        probe["note"] = ("proposed probe references unknown/degenerate classes; "
+                         "re-certify would decline it")
+        return probe
+    distr = tuple(d for d in (probe.get("distractor") or []) if d in cset and d not in (pos, neg))[:2]
+    probe["distractor"] = list(distr) if len(distr) == 2 else ["STR", "MUS"]
+    probe["valid"] = True
+    return probe
+
+
+def _heuristic_next(summary, class_names):
+    """Deterministic fallback so the loop runs without Bedrock: target the weakest pillar
+    and propose a tighter, matched foil for the same positive concept."""
+    pill = summary.get("pillars") or {}
+    weakest = min(pill, key=lambda k: (pill[k].get("confidence") or 0.0)) if pill else None
+    concept = summary.get("current_concept") or "TUM_vs_LYM"
+    pos = concept.split("_vs_")[0] if "_vs_" in concept else "TUM"
+    foils = [c for c in class_names if c not in (pos, "BACK")]
+    neg = foils[0] if foils else "STR"
+    probe = _sanitize_probe(
+        {"concept": f"{pos}_vs_{neg}", "pos": pos, "neg": neg,
+         "distractor": ["STR", "MUS"],
+         "rationale": "tighter matched foil for the same positive concept"}, class_names)
+    return {
+        "diagnosis": (f"weakest pillar is {weakest} (lowest per-pillar confidence)"
+                      if weakest else "no pillars available to diagnose"),
+        "weakest_pillar": weakest,
+        "next_hypothesis": (f"{pos} is a concept-specific causal axis against a tighter "
+                            f"foil ({neg}); re-certify to test whether the {weakest} pillar "
+                            f"strengthens under a harder contrast"),
+        "proposed_probe": probe,
+        "message_to_downstream": (f"Re-examine the {pos} call against {neg}; the current "
+                                  f"certificate scored {summary.get('overall_score')}."),
+        "feed_to": "kpro",
+        "proposed_by": "heuristic (bedrock unavailable)",
+    }
+
+
+def next_hypothesis(certificate, class_names, use_bedrock=True):
+    """Close the certify loop: read a card's SCORE + REASONING TRACE -> propose the NEXT
+    hypothesis + a follow-up probe + a downstream message to feed to K-Pro / Claude.
+
+    Extracts the universal confidence, per-pillar verdicts and the deterministic reasoning
+    trace out of a `certify` card and (via Claude, with a deterministic fallback) proposes
+    the next causal hypothesis and one concrete follow-up probe over the available classes.
+    The proposed probe is filtered to real classes with pos != neg; the battery still
+    decides certifiability, so a reflected hypothesis can never carry its own verdict.
+    """
+    summary = _summarize_card(certificate, class_names)
+    if use_bedrock:
+        client = _bedrock.ClaudeBedrock()
+        if client.available():
+            try:
+                out = client.propose_hypothesis(summary)
+                out["proposed_probe"] = _sanitize_probe(out.get("proposed_probe"), class_names)
+                out["proposed_by"] = "claude-sonnet (bedrock)"
+                return out
+            except Exception as e:
+                out = _heuristic_next(summary, class_names)
+                out["bedrock_error"] = repr(e)
+                return out
+    return _heuristic_next(summary, class_names)

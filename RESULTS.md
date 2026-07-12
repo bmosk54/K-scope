@@ -212,3 +212,178 @@ rejected axis is visible, not silent. Caveats unchanged: `necessity_z` stays a
 divide-by-≈0 artifact on these perfectly-separable classes (sufficiency + gate +
 specificity carry the verdict), and single-source data keeps the **confound gate
 UNCHECKED** — agent design widens *coverage*, it does not answer real-biology-vs-batch.
+
+---
+
+# Live source-intervention necessity — the Hydra prior, MEASURED (2026-07-12)
+
+The layer-resolved **source-intervention** suite (the "track #3" TODO everywhere above)
+is now built and run. `causal/live.py` (`LiveEncoder`) hooks Phikon-v2 / Dinov2
+`encoder.layer[L]`, projects the concept axis out of the CLS token **in the residual
+stream**, and lets blocks L+1..final **recompute**; `intervene.live_necessity()` measures
+the readout probe's **decision-margin drop** on the actual tile's forward pass vs a
+matched-random null. This is the real do() — `intervened_on_input=True` — replacing the
+cached readout-space projection (whose `necessity_z ≈ 5e8` was a divide-by-≈0 artifact).
+
+Two engineering fixes made the signal real: the readout probe is **fit live on a disjoint
+reference set** (the on-disk single-layer npz came from an older extractor → representation
+mismatch → inverted probabilities), and the metric is the **graded margin**, not the
+saturating 0/1 probability on a 1024-d separable probe.
+
+**Setup.** Frozen Phikon-v2, real NCT-CRC tiles (16/class reference for the probe, 6/class
+disjoint intervention set), concept axis derived live from that run's hidden states at each
+of the 3 configured depths, n_null=12 matched-random directions per layer.
+
+### Necessity curve — ablate TUM-vs-LYM, score TUM-vs-LYM
+
+| layer (block) | concept margin-drop | random drop (mean±sd) | gap | z | bites |
+|---|---|---|---|---|---|
+| mid_early (7) | +0.064 | +0.000 ± 0.023 | **+0.064** | +2.8 | ✅ |
+| mid (15) | +0.811 | +0.008 ± 0.027 | **+0.803** | +29.5 | ✅ |
+| readout (23) | +3.244 | +0.014 ± 0.094 | **+3.230** | +34.5 | ✅ |
+
+### Cross-interference (ablate-A-score-B) — ablate TUM-vs-LYM, score STR-vs-MUS
+
+| layer | STR/MUS margin-drop under TUM-ablation | random | gap | z |
+|---|---|---|---|---|
+| mid_early | +0.058 | +0.001 | +0.056 | +9.0 |
+| mid | +0.104 | −0.007 | +0.111 | +7.5 |
+| readout | −0.073 | −0.008 | **−0.065** | **−1.6 (n.s.)** |
+
+## Read of the numbers
+
+1. **The redundancy / Hydra prior is now confirmed *and quantified*, not just expected.**
+   The necessity gap is **graded and monotonic toward the readout** (0.06 → 0.80 → 3.23)
+   with the matched-random null pinned at ~0 at every layer. Early-layer ablation barely
+   dents the readout (the model recomputes the concept downstream); it becomes load-bearing
+   from mid-network on. This is a real per-slide causal read — the exact "necessity is
+   redundancy-limited, layer-resolved" story the priors demanded, now measured on live
+   forward passes rather than asserted.
+
+2. **Specificity is now *causal*, not just geometric.** Ablating the tumor-immune axis
+   leaves the stroma (STR/MUS) readout intact at the readout layer (gap −0.065, z −1.6,
+   not significant) — ~50× smaller than the on-target 3.23 drop. A small shared mid-network
+   representation exists but does not propagate to the stroma decision. This is a genuine
+   statement about the model's computation that the cached distractor-cosine cannot make.
+
+3. **Necessity flips from the weakest number to the strongest evidence.** The old
+   readout-space necessity was a divide-by-≈0 artifact and had to be reported categorically;
+   the live curve is a clean, layer-resolved, null-separated, per-slide causal measurement.
+
+## Wired into the certificate
+
+`certify_answer(..., live_ctx={images, image_labels, ref_images, ref_labels, encoder})`.
+Per certifiable claim on a hook-capable substrate, the necessity pillar becomes the live
+curve and `scorecard` grades it (GROUNDED requires a **non-readout** layer to bite; score =
+fraction of the readout-necessity already irreversible before the readout). End-to-end on
+the core question *"Characterize the tumor microenvironment"*: `immune_infiltrate` →
+**GROUNDED**, necessity **0.436** (was WEAK), card `intervened_on_input: true`,
+`necessity_mode: live source-intervention`. Without `live_ctx` it degrades honestly to
+cached readout-space (necessity WEAK, `intervened_on_input: false`).
+
+## Certify-layer status (pillars)
+
+| Pillar | Status |
+|---|---|
+| **Necessity** | ✅ **live source-intervention** — graded, layer-resolved, null-separated, per-slide. |
+| **Specificity** | ✅ distractor-cosine (< 0.16) **and** causal cross-interference. |
+| **Sufficiency** | ✅ flip 1.00 vs random ~0, but near-circular — **demote to caveated secondary** now that live necessity carries the verdict. |
+| **Quantification** | ✅ per-pillar score + z + p + Holm-Bonferroni + coverage line + confound badge + faithfulness assumptions on the card. |
+| **Reasoning trace** | ✅ **done** — every claim carries a deterministic 7-step `reasoning_trace` (contrast-validation → necessity → sufficiency → specificity → confound → multiple-comparisons → verdict), each step pairing the observed numbers with their interpretation; plus an answer-level `summary_trace` (coverage + honest declines + confound badge). Instant, no LLM. Optional `explain=True` adds a plain-English narration in ONE batched LLM call (~5s) that only phrases the deterministic numbers — it never gates the fast path. |
+| **Confound gate** | ❌ UNCHECKED (single-source) — loud card badge; needs multi-site H&E (TCGA ≥2 sites / Kömen). |
+
+The per-claim reasoning trace is what makes the card auditable inside pharma governance —
+a reviewer can step through *why* each numeric score is what it is and *why* the verdict
+followed. It is part of the MCP output (`certify_answer(...).claims[i].reasoning_trace` and
+`.summary_trace`). With this, the only remaining hole is the confound gate, which is a
+**data** gap (multi-site H&E), not a code gap — and it is named loudly on every card.
+
+**Safety cap — the validation gate now enforces the verdict, not just annotates it.**
+A contrast that fails the gate (held-out AUROC < 0.75, or intensity-collinearity |r| > 0.60)
+**caps the verdict at WEAK** (`contrast_capped: true`) — a probe that rides the
+staining/intensity proxy can **never** read GROUNDED. Verified on a live case: `stroma`
+(STR-vs-MUS, |r| = 0.913) drops from a would-be GROUNDED to **WEAK** with the trace stating
+*"the contrast RIDES the staining/intensity proxy … A probe that rides intensity never reads
+GROUNDED,"* while a clean axis (`tumor_epithelium`, |r| = 0.52) stays GROUNDED. This closes
+the gap where the gate flagged confounded probes but the card could still certify them — the
+whole safety story (agent designs probes, the gate keeps it honest) now holds end-to-end.
+
+---
+
+# End-to-end LIVE demo — Sonnet-as-K-Pro answer, certified on phikon (2026-07-12)
+
+First **fully end-to-end** run of `certify_answer` on a **model-generated** answer (not the
+hardcoded `_demo()` string) with **live per-slide source-intervention** — the whole pipeline
+exercised at once: LLM answer → atomic-claim decomposition → per-claim do()-battery → live
+necessity → intensity gate → confound gate → scorecard → Holm-Bonferroni.
+
+## Hypothesis under test
+
+Track hypothesis (canonical, `hypothesis` verb): *"TUM vs LYM is a concept-specific,
+certifiable causal axis in phikon-v2's latent — the tumor-immune interface."* Answer-level
+generalization actually run here:
+
+> **H:** every atomic concept-claim in a free-form K-Pro answer to *"Characterize the tumor
+> microenvironment"* is *either* a concept-specific, causally load-bearing, non-confounded
+> axis in phikon-v2's latent — certifiable per-claim (necessity ∧ sufficiency ∧ specificity
+> vs matched-random null, intensity-gated, via live source-intervention) — *or* it is
+> honestly **declined** (no substrate) or **capped** (confounded).
+>
+> **Falsifier:** if the certifier returns GROUNDED for every claim regardless of substrate
+> it is a rubber stamp and void. A real certifier must produce *differentiated* verdicts
+> driven by the model's representation, not the answer's fluency, and must **veto a
+> statistically-perfect-but-confounded** claim.
+
+## Setup
+
+- **K-Pro simulated by Claude Sonnet 4.6** on Bedrock (`us.anthropic.claude-sonnet-4-6`),
+  system-prompted as a pathology FM reporting on a tile its classifier called adenocarcinoma.
+  Question: *"Characterize the tumor microenvironment."* The answer was a correct textbook CRC
+  adenocarcinoma TME description (neoplastic glands, desmoplastic stroma + CAFs, TILs / CD8⁺).
+- **Substrate:** frozen `phikon_v2`, real NCT-CRC-HE tiles streamed live — **24/class** for
+  {TUM, LYM, NORM, STR, MUS, MUC}, split **16 reference (live probe-fit) + 8 intervention
+  (watched), disjoint** (non-circular). Live source-intervention via `causal/live.LiveEncoder`,
+  `n_null=12` (live) / 100 (cached battery). Claim decomposition = the same Bedrock call.
+- Card: `artifacts/certificates/nct_crc_he/phikon_v2/demo_TME_answer_card.json`;
+  driver `scratchpad/demo_tme.py`.
+
+## Result — 12 atomic claims, differentiated verdicts
+
+| Claim → concept | Verdict | AUROC | intens_r | necessity | suff | spec |
+|---|---|---|---|---|---|---|
+| neoplastic glands → `tumor_epithelium` | **GROUNDED** | 1.000 | 0.520 | 0.143 (bites @ readout) | 1.000 | 0.936 |
+| loss of crypt arch. → `normal_mucosa` | **GROUNDED** | 1.000 | 0.520 | 0.003 (readout only) | 1.000 | 0.932 |
+| desmoplastic stroma → `stroma` | **WEAK (capped)** | 1.000 | **0.913** | 1.000 (z=152) | 0.995 | 0.953 |
+| collagen-rich ECM → `stroma` | **WEAK (capped)** | 1.000 | **0.913** | 1.000 | 0.995 | 0.953 |
+| TILs → `immune_infiltrate` | **GROUNDED** | 1.000 | 0.576 | 0.572 | 1.000 | 0.976 |
+| columnar epithelium, nuclear hyperchromasia, prominent nucleoli, mitoses, CAFs, CD8⁺, CD4⁺ (7) | **NOT_CERTIFIABLE** | — | — | — | — | — |
+
+**Coverage: 5 of 12 certifiable → 3 GROUNDED, 2 capped-WEAK; 7 declined.** `necessity_mode
+= live source-intervention (per-slide)`, `intervened_on_input=true`, confound gate
+**UNCHECKED (single-source)**.
+
+## Read of the numbers (H confirmed, not falsified)
+
+1. **Not a rubber stamp — the whole point.** Only 3/12 read GROUNDED. The verdicts are driven
+   by the substrate, not the (fluent, biologically-correct) answer.
+2. **The veto fired on a true-but-confounded claim.** `stroma` had *perfect* pillars
+   (necessity 1.000 z=152, sufficiency 0.995, specificity 0.953) yet was **capped at WEAK**
+   because the STR-vs-MUS axis rides the staining/intensity proxy (**|r| = 0.913 > 0.60**).
+   A naive TCAV/probe tool certifies this; the gate refuses. This is the faithfulness-audit
+   value in one line: *right answer, possibly wrong reason.*
+3. **Layer-resolved necessity honesty held per-slide.** `tumor_epithelium` only becomes
+   irreversible near the readout (nec 0.143); `normal_mucosa` doesn't bite until the readout
+   at all (0.003, mid-layer gap n.s.); `immune_infiltrate` builds from mid-network (0.572).
+   Exactly the redundancy-limited curve, now measured on live forward passes.
+4. **Honest scope decline, not force-fit.** All 7 cell/subcellular claims → NOT_CERTIFIABLE
+   (need HistoPLUS cell-type embeddings on `h0_mini`, absent) — coverage is stated, not faked.
+
+## Caveats / open
+
+- Sonnet's answer was biologically **correct**, so the catches were **confound-veto** +
+  **out-of-scope decline**, *not* a caught hallucination. The battery certifies whether a
+  *concept is a faithful causal axis in the model*; it does **not** verify a claim is present
+  in one specific query tile. A negative control (inject a false claim, e.g. "abundant adipose
+  tissue") to demonstrate NULL/decline is the natural next run.
+- Confound gate still **UNCHECKED** — single-source NCT-CRC; needs multi-site H&E (TCGA/Kömen).
+- K-Pro is *simulated* by Sonnet; real K-Pro query integration is not wired.
