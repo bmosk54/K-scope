@@ -166,8 +166,10 @@ _TEMPLATE = r"""<!DOCTYPE html>
   h1 { font-family: var(--mono); font-size: clamp(20px, 3.2vw, 30px); font-weight: 600;
     margin: 2px 0 0; letter-spacing: -0.01em; width: 100%; }
   .sub { color: var(--muted); font-size: 14px; margin: 4px 0 0; word-break: break-all; }
-  .axis-note { width: 100%; margin: 10px 0 0; font-family: var(--mono); font-size: 12.5px;
-    color: var(--ink); display: inline-flex; align-items: center; gap: 8px; }
+  /* sits at the right edge of the header row (margin-left:auto) instead of a full-width line
+     below the title — packs the title block horizontally rather than stacking it vertically */
+  .axis-note { margin: 4px 0 0 auto; font-family: var(--mono); font-size: 12.5px;
+    color: var(--ink); display: inline-flex; align-items: center; gap: 8px; text-align: right; }
   .axis-note .pill { background: color-mix(in srgb, var(--accent) 16%, transparent);
     color: var(--accent); border-radius: 6px; padding: 2px 8px; font-weight: 600; }
 
@@ -183,7 +185,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     background: var(--panel); border: 1px solid var(--line); border-radius: 11px; padding: 6px;
     min-width: 260px; box-shadow: 0 14px 34px -14px rgba(0,0,0,.55);
     display: flex; flex-direction: column; gap: 2px; }
-  .ax-menu { min-width: 210px; }
+  .ax-menu { min-width: 210px; left: auto; right: 0; }  /* right-aligned: the switcher now hugs the right edge */
   .src-item { text-align: left; background: none; border: 0; border-radius: 8px; padding: 8px 11px;
     font-family: var(--sans); font-size: 12.5px; color: var(--ink); cursor: pointer;
     display: flex; align-items: center; gap: 8px; }
