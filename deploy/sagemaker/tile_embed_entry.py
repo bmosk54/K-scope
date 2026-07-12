@@ -29,6 +29,22 @@ import hoptimus
 import tile_wsi
 
 
+def _resolve_hf_token():
+    """HF token from env, else the hyperparameters file (where launch puts it to
+    dodge the 512-char Environment cap). Values there are JSON-encoded."""
+    if os.environ.get("HF_TOKEN"):
+        return os.environ["HF_TOKEN"]
+    p = "/opt/ml/input/config/hyperparameters.json"
+    if os.path.exists(p):
+        v = json.load(open(p)).get("HF_TOKEN")
+        if v:
+            try:
+                return json.loads(v)
+            except Exception:
+                return v
+    return None
+
+
 def _build_transform(model):
     from timm.data import create_transform, resolve_data_config
     return create_transform(**resolve_data_config(model.pretrained_cfg, model=model))
@@ -86,6 +102,10 @@ def main():
                         filters=filters, max_tiles=max_tiles)
 
     # 3. embed
+    tok = _resolve_hf_token()
+    if tok:
+        os.environ["HF_TOKEN"] = tok
+        os.environ["HUGGING_FACE_HUB_TOKEN"] = tok
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = hoptimus.load_hoptimus(pretrained=True, device=device)
     F, coords, kept = _embed(model, _build_transform(model), tile_dir, device)

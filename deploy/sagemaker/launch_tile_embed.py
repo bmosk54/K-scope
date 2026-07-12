@@ -68,11 +68,18 @@ def main():
     }
     if args.max_tiles:
         env["MAX_TILES"] = str(args.max_tiles)
-    if os.environ.get("HF_TOKEN"):
-        env["HF_TOKEN"] = os.environ["HF_TOKEN"]
     if args.vector_index:
         env["VECTOR_BUCKET_ARN"] = VECTOR_BUCKET_ARN
         env["VECTOR_INDEX"] = args.vector_index
+
+    hp = {
+        "sagemaker_program": json.dumps("tile_embed_entry.py"),
+        "sagemaker_submit_directory": json.dumps(f"s3://{BUCKET}/{code_key}"),
+    }
+    # HF OAuth token can exceed the 512-char Environment cap; hyperparameters allow
+    # more and stay within our account (not the team-shared bucket).
+    if os.environ.get("HF_TOKEN"):
+        hp["HF_TOKEN"] = json.dumps(os.environ["HF_TOKEN"])
 
     sm = boto3.client("sagemaker", region_name=args.region)
     sm.create_training_job(
