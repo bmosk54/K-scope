@@ -15,7 +15,6 @@
 
   var el = {
     problem: $("rr-problem"), track: $("rr-track"), iters: $("rr-iters"),
-    bedrock: $("rr-bedrock"), live: $("rr-live"),
     start: $("rr-start"), stop: $("rr-stop"), status: $("rr-status"),
     feed: $("rr-feed"), summary: $("rr-circuit-summary"),
     aggBox: $("rr-circuit-agg"), mode: $("rr-circuit-mode"),
@@ -91,8 +90,29 @@
     var val = $("rr-stage-" + k);
     stageEl[k] = { node: val ? val.closest(".rr-stage") : null, val: val };
   });
+  // A "hot" highlight that sweeps probe → certify → locate → ablate → reflect on a loop
+  // while the battery is running, so the pipeline visibly lights up stage-by-stage the
+  // whole time it's working (not just for a flash when an iteration finally lands).
+  var scanTimer = null, scanIdx = 0;
+  function clearHot() {
+    STAGES.forEach(function (kk) { if (stageEl[kk].node) stageEl[kk].node.classList.remove("hot"); });
+  }
+  function startScan() {
+    stopScan(); scanIdx = 0;
+    scanTimer = window.setInterval(function () {
+      clearHot();
+      var s = stageEl[STAGES[scanIdx % STAGES.length]];
+      if (s && s.node) s.node.classList.add("hot");
+      scanIdx++;
+    }, 440);
+  }
+  function stopScan() {
+    if (scanTimer) { window.clearInterval(scanTimer); scanTimer = null; }
+    clearHot();
+  }
   function pipeReset() {
     if (el.pipeline) el.pipeline.classList.remove("running");
+    stopScan();
     STAGES.forEach(function (k) {
       var s = stageEl[k]; if (!s.node) return;
       s.node.classList.remove("hot", "done");
@@ -101,9 +121,10 @@
   }
   function pipeRunning(on) {
     if (el.pipeline) el.pipeline.classList.toggle("running", !!on);
+    if (on) startScan(); else stopScan();
   }
-  // Fill each stage's live value from the newest iteration, then sweep the "hot"
-  // highlight left-to-right so the eye follows one datum through the loop.
+  // Fill each stage's live value from the newest iteration and mark it done (green) — the
+  // sweeping "hot" scan keeps running underneath to show the loop is still working.
   function pipeUpdate(r) {
     var c = r.contrast || {}, ab = r.ablation || {};
     var vals = {
@@ -115,13 +136,10 @@
       reflect: r.next_probe ? "→ " + r.next_probe.pos + " vs " + r.next_probe.neg
                : (r.diagnosis ? shorten(r.diagnosis, 46) : "converged"),
     };
-    STAGES.forEach(function (k, i) {
+    STAGES.forEach(function (k) {
       var s = stageEl[k]; if (!s.node) return;
-      window.setTimeout(function () {
-        STAGES.forEach(function (kk) { if (stageEl[kk].node) stageEl[kk].node.classList.remove("hot"); });
-        s.node.classList.add("hot", "done");
-        s.val.textContent = vals[k];
-      }, i * 130);
+      s.val.textContent = vals[k];
+      s.node.classList.add("done");
     });
   }
   function shorten(s, n) {
@@ -160,8 +178,10 @@
       problem: el.problem.value.trim() || "Characterize the tumor microenvironment.",
       track: el.track.value,
       iters: el.iters.value || "5",
-      bedrock: el.bedrock.checked ? "1" : "0",
-      live: el.live.checked ? "1" : "0",
+      // Sonnet proposes the probes (graceful heuristic fallback if Bedrock is unavailable);
+      // circuit is the fast cached readout-space curve. Both were UI toggles — now fixed defaults.
+      bedrock: "1",
+      live: "0",
     });
     el.start.disabled = true; el.stop.disabled = false;
     serverErr = false;
@@ -176,7 +196,7 @@
       if (rec.done) { finishDone(rec); return; }
       renderIter(rec);
       if (rec.circuit_mode && el.mode) el.mode.textContent = "· " + rec.circuit_mode;
-      setStatus("iteration " + rec.iter + " / " + rec.max_iters + (el.live.checked ? " · live" : ""), "running");
+      setStatus("iteration " + rec.iter + " / " + rec.max_iters, "running");
     };
     // Named server-sent 'error' event (our SSE error frame carries JSON). Runs before
     // onerror for the same "error" event; flag it so onerror doesn't clobber the message.
@@ -298,14 +318,14 @@
       tCtx.fillRect(c * CELL, r * CELL, CELL + 0.6, CELL + 0.6);
     }
     var tp = hm.top_patch || 0, tr = Math.floor(tp / S), tc = tp % S;
-    tCtx.strokeStyle = "#ffe08a"; tCtx.lineWidth = 1.6;
+    tCtx.strokeStyle = "#B5852A"; tCtx.lineWidth = 1.6;
     tCtx.strokeRect(tc * CELL + 0.8, tr * CELL + 0.8, CELL, CELL);
     tileHover = buildRanks(hm);
     var posL = hm.pos_label || hm.pos, negL = hm.neg_label || hm.neg;
     $("rr-tile-legend").innerHTML =
-      '<span style="color:#7fb0ff">◀ ' + escapeHtml(negL) + '</span>' +
+      '<span style="color:#2F6FB5">◀ ' + escapeHtml(negL) + '</span>' +
       '<span class="rr-leg-bar"></span>' +
-      '<span style="color:#ff8a8a">' + escapeHtml(posL) + ' ▶</span>';
+      '<span style="color:#C24A38">' + escapeHtml(posL) + ' ▶</span>';
   }
 
   function buildRanks(hm) {
@@ -356,7 +376,7 @@
     var shareStr = Object.keys(hm.hot_share || {}).map(function (k) { return hm.hot_share[k] + "× " + k; }).join(", ");
     if (capEl) capEl.innerHTML =
       "Where the <b>" + escapeHtml(pos + " vs " + neg) + "</b> axis fires on the input tile " +
-      '(<span style="color:#ff8a8a">warm = ' + escapeHtml(posL) + "</span>). " +
+      '(<span style="color:#C24A38">warm = ' + escapeHtml(posL) + "</span>). " +
       "Top patch ◉ → <b>" + escapeHtml(hm.top_dir ? hm.top_dir.label : posL) + "</b>; hottest-8: " +
       escapeHtml(shareStr || "—") + ". Hover a patch for its rank (e.g. 1st " + escapeHtml(pos) + ").";
   }

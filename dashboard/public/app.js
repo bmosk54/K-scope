@@ -10,11 +10,11 @@
   "use strict";
 
   const COLOR = {
-    GROUNDED: "#3ddc97",
-    WEAK: "#e8b23e",
-    NOT_CERTIFIABLE: "#7a7fa0",
-    accent: "#6c8dfb",
-    danger: "#ef6572",
+    GROUNDED: "#12916A",
+    WEAK: "#B5852A",
+    NOT_CERTIFIABLE: "#8C8577",
+    accent: "#12959E",
+    danger: "#C8434F",
   };
 
   let certifiable = window.CARD.claims.filter((c) => !!c.scores);
@@ -273,7 +273,7 @@
     g.append("rect")
       .attr("x", tc * CELL).attr("y", tr * CELL)
       .attr("width", CELL).attr("height", CELL)
-      .attr("fill", "none").attr("stroke", "#ffe08a").attr("stroke-width", 1.4);
+      .attr("fill", "none").attr("stroke", "#B5852A").attr("stroke-width", 1.4);
 
     // ---- hover: rank each patch WITHIN the pole it leans toward, e.g. "1st TUM" ----
     // (rank 1 of the pos pole == the ringed top patch). Ranked by |signed z| so it's "how
@@ -336,9 +336,9 @@
     const leg = document.createElement("div");
     leg.className = "hm-legend";
     leg.innerHTML =
-      `<span class="hm-leg-lab" style="color:#7fb0ff">◀ ${negL}</span>` +
-      `<span class="hm-leg-bar" style="background:linear-gradient(90deg,#5a7bd6,#0b0a12 50%,#e06a6a)"></span>` +
-      `<span class="hm-leg-lab" style="color:#ff8a8a">${posL} ▶</span>`;
+      `<span class="hm-leg-lab" style="color:#2F6FB5">◀ ${negL}</span>` +
+      `<span class="hm-leg-bar" style="background:linear-gradient(90deg,#2F6FB5,#EFE9DC 50%,#C24A38)"></span>` +
+      `<span class="hm-leg-lab" style="color:#C24A38">${posL} ▶</span>`;
     container.appendChild(leg);
 
     const shareStr = Object.entries(hm.hot_share || {})
@@ -346,7 +346,7 @@
     document.getElementById("case-caption").innerHTML =
       `<b>${claim.claim}</b> — real NCT-CRC ${hm.pos} tile. Each 16px patch is tinted by which pole of the ` +
       `<b>${hm.pos} vs ${hm.neg}</b> axis its readout activation leans toward ` +
-      `(<span style="color:#ff8a8a">warm = ${posL}</span>, <span style="color:#7fb0ff">cool = ${negL}</span>), ` +
+      `(<span style="color:#C24A38">warm = ${posL}</span>, <span style="color:#2F6FB5">cool = ${negL}</span>), ` +
       `and darkened where it carries the axis weakly (magnitude z-scored vs ${hm.n_null} matched-random directions). ` +
       `The ringed ◉ top patch leans <b>${hm.top_dir ? hm.top_dir.label : posL}</b>; hottest-8 lean: ${shareStr}. ` +
       `<span class="hm-caveat">Projection saliency on the model's representation; the faithful ` +
@@ -591,7 +591,7 @@
 
   // ---------------------------------------------------------------- answer flow: sankey + claim rail
   const VERDICT_ORDER = { GROUNDED: 0, WEAK: 1, NOT_CERTIFIABLE: 2 };
-  const SANKEY_ACCENT = "#7c9dff"; // neutral source-node tone, distinct from all 3 verdict colors
+  const SANKEY_ACCENT = "#5B6FA8"; // neutral source-node tone, distinct from all 3 verdict colors
 
   // Group certifiable claims by concept (splitting a concept into separate nodes if its
   // claims ever disagree on verdict), then append one synthetic node absorbing ALL declined
@@ -1140,6 +1140,33 @@
   function setStatus(t) { $c("c-status").textContent = t; }
   function showOut(o) { const el = $c("c-out"); el.textContent = typeof o === "string" ? o : JSON.stringify(o, null, 2); el.classList.add("show"); }
 
+  // Stream text into a field the way an LLM emits tokens — a few chars per tick with a
+  // little cadence jitter and a blinking block caret — instead of snapping in at once.
+  // A monotonically-increasing token cancels any in-flight stream on the same field.
+  let _streamTok = 0;
+  const CARET = " ▋"; // ▋
+  function streamInto(el, text, opts) {
+    opts = opts || {};
+    const speed = opts.speed || 13;   // base ms between ticks
+    const chunk = opts.chunk || 3;    // ~chars per tick (approx one token)
+    const myTok = ++_streamTok;
+    el.value = "";
+    el.classList.add("streaming");
+    return new Promise((resolve) => {
+      let i = 0;
+      (function tick() {
+        if (myTok !== _streamTok) return resolve();          // superseded by a newer stream
+        const step = chunk + (Math.random() < 0.35 ? 1 : 0); // jitter the token size
+        i = Math.min(text.length, i + step);
+        const done = i >= text.length;
+        el.value = text.slice(0, i) + (done ? "" : CARET);
+        el.scrollTop = el.scrollHeight;                      // follow the newest text
+        if (done) { el.classList.remove("streaming"); resolve(); }
+        else setTimeout(tick, speed + Math.random() * 22);   // occasional longer "think" pause
+      })();
+    });
+  }
+
   // Run certify on the current prompt+answer -> reveal + populate the Case/Proof/Verdict.
   async function runCertify() {
     if (!$c("c-answer").value.trim()) { setStatus("submit the slide + prompt first →"); return; }
@@ -1185,7 +1212,8 @@
           body: JSON.stringify({ prompt: $c("c-prompt").value }) });
         const d = await r.json();
         if (d.error) throw new Error(d.error);
-        $c("c-answer").value = d.answer;
+        setStatus("K-Pro writing…");
+        await streamInto($c("c-answer"), d.answer, { speed: 12, chunk: 3 });
         setStatus("answer ready — press Run certify →");
       } catch (e) { setStatus("submit failed: " + e.message); }
       b.disabled = false;
