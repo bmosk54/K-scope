@@ -14,6 +14,7 @@ Endpoints:
     POST /api/verb/<name>        -> raw MCP verb output (certify/hypothesis/steer/ablate/
                                     design/specificity/rehypothesize/confound/layered/probe)
 """
+import json
 import os
 import sys
 import traceback
@@ -28,11 +29,33 @@ from flask import Flask, request, jsonify, send_from_directory
 # warm imports — pay the torch/biolayer cost ONCE, here, not per request
 import bridge  # dashboard/bridge.py (adapters + build_*)
 from biolayer.mcp import verbs
+from biolayer.dynamic import bedrock as _bedrock
 
 PUBLIC = os.path.join(HERE, "public")
 app = Flask(__name__, static_folder=None)
 
-DEFAULT_Q = "Characterize the tumor microenvironment."
+DEFAULT_Q = "Assess the tumor-infiltrating lymphocyte response and stromal desmoplasia."
+
+_KPRO_SYS = (
+    "You are K-Pro, a pathology foundation model reading a colorectal H&E slide. You are "
+    "given the slide's tissue composition as classified by the encoder. Answer the "
+    "pathologist's question in 2-4 sentences of concrete morphology, grounded ONLY in the "
+    "composition given — name the tissue compartments and the immune pattern; do not invent "
+    "findings the composition does not support.")
+_OPT_SYS = (
+    "You refine a pathology question so it is SPECIFIC and answerable against tile-level "
+    "tissue concepts the certifier can ground: tumor epithelium, lymphocytic/immune "
+    "infiltrate, cancer-associated stroma, mucus, necrosis, smooth muscle, normal mucosa. "
+    "Given the current question (and, if provided, which claims certified vs were declined), "
+    "return ONE tighter, more specific question that targets the certifiable concepts and "
+    "drops un-testable parts. Output ONLY the question — no preamble, no quotes.")
+
+
+def _slide():
+    try:
+        return json.load(open(os.path.join(PUBLIC, "slide_demo.json")))
+    except Exception:
+        return {"ho_composition": "", "prompt": DEFAULT_Q}
 
 
 # ---- MCP verb dispatch (all warm) -----------------------------------------
@@ -99,6 +122,52 @@ def api_verb(name):
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": f"{type(e).__name__}: {e}", "verb": name}), 503
+
+
+@app.route("/api/answer", methods=["POST", "OPTIONS"])
+def api_answer():
+    """Submit the input slide + a prompt -> K-Pro (Claude) infers an answer from the
+    slide's encoder composition. The 'inference' step the certificate then audits."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    a = request.get_json(silent=True) or {}
+    prompt = (a.get("prompt") or DEFAULT_Q).strip()
+    slide = _slide()
+    comp = slide.get("ho_composition", "")
+    client = _bedrock.ClaudeBedrock()
+    if not client.available():
+        return jsonify({"error": "bedrock unavailable"}), 503
+    try:
+        answer = client._invoke(
+            _KPRO_SYS, f"Slide tissue composition (encoder readout): {comp}\n\n"
+                       f"Question: {prompt}\n\nAnswer:", max_tokens=350).strip()
+        return jsonify({"answer": answer, "composition": comp,
+                        "substrate": slide.get("substrate"), "prompt": prompt})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"{type(e).__name__}: {e}"}), 503
+
+
+@app.route("/api/optimize_prompt", methods=["POST", "OPTIONS"])
+def api_optimize():
+    """Hypothesis step: refine the current prompt into a tighter, more certifiable one."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    a = request.get_json(silent=True) or {}
+    prompt = (a.get("prompt") or DEFAULT_Q).strip()
+    client = _bedrock.ClaudeBedrock()
+    if not client.available():
+        return jsonify({"error": "bedrock unavailable"}), 503
+    u = f"Current question: {prompt}\n"
+    if a.get("coverage"):
+        u += f"Last certificate coverage: {a['coverage']}\n"
+    u += "Return ONE tighter, more specific question:"
+    try:
+        opt = client._invoke(_OPT_SYS, u, max_tokens=120).strip().strip('"')
+        return jsonify({"prompt": opt, "from": prompt})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"{type(e).__name__}: {e}"}), 503
 
 
 @app.route("/")

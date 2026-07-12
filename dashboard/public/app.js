@@ -640,12 +640,14 @@
 
   // ---------------------------------------------------------------- view router
   const VIEW_META = {
+    prompt: { title: "Prompt", tag: "input slide → K-Pro answer → certify" },
     case: { title: "Case", tag: "one claim, followed pixel to concept axis" },
     proof: { title: "Proof", tag: "necessity × sufficiency × specificity, and where the axis came from" },
     verdict: { title: "Verdict", tag: "certified claim, confound check, honest coverage" },
   };
 
   function goToView(id) {
+    document.body.dataset.view = id;                 // drives Prompt-view / card-view CSS
     d3.selectAll(".view").classed("active", false);
     d3.select("#view-" + id).classed("active", true);
     d3.selectAll(".nav-item").classed("active", false);
@@ -730,49 +732,85 @@
     running = false;
   }
 
-  // ---------------------------------------------------------------- MCP console
+  // ---------------------------------------------------------------- inference console
+  const $c = (id) => document.getElementById(id);
+  function setStatus(t) { $c("c-status").textContent = t; }
+  function showOut(o) { const el = $c("c-out"); el.textContent = typeof o === "string" ? o : JSON.stringify(o, null, 2); el.classList.add("show"); }
+
+  // Run certify on the current prompt+answer -> reveal + populate the Case/Proof/Verdict.
+  async function runCertify() {
+    if (!$c("c-answer").value.trim()) { setStatus("submit the slide + prompt first →"); return; }
+    const btn = $c("c-certify"); btn.disabled = true; setStatus("running the causal battery…");
+    try {
+      const r = await fetch(apiUrl("api/certify_answer"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: $c("c-prompt").value, answer: $c("c-answer").value,
+                               track: $c("c-track").value, bedrock: $c("c-bedrock").checked }) });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      window.CARD = d.CARD; recomputeState(); setLiveBadge(true);
+      document.body.classList.remove("no-card");        // reveal the evidence card
+      renderAll(); goToView("case");
+      setStatus(d.CARD.coverage.summary + " · " + (d.CARD.certification_scope || {}).level);
+    } catch (e) { setStatus("certify failed: " + e.message); }
+    btn.disabled = false;
+  }
+
   function initConsole() {
-    const $ = (id) => document.getElementById(id);
-    const out = $("c-out");
-    const showOut = (o) => { out.textContent = typeof o === "string" ? o : JSON.stringify(o, null, 2); out.classList.add("show"); };
+    // slide metadata (the input image H-optimus reads)
+    fetch(apiUrl("slide_demo.json")).then((r) => r.json()).then((s) => {
+      window._slide = s;
+      $c("slide-meta").innerHTML = "<b>" + (s.substrate || "h_optimus_0") + "</b> · " +
+        s.n_tiles + " tiles → readout <b>" + s.ho_composition + "</b>";
+      if (s.prompt) $c("c-prompt").value = s.prompt;
+    }).catch(() => { $c("slide-meta").textContent = "slide unavailable"; });
 
-    $("c-load-slide").addEventListener("click", async () => {
+    // Submit slide + prompt -> K-Pro (Claude) infers the answer
+    $c("c-submit").addEventListener("click", async () => {
+      const b = $c("c-submit"); b.disabled = true; setStatus("K-Pro inferring from the slide…");
+      $c("c-answer").value = "";
       try {
-        const s = await (await fetch(apiUrl("slide_demo.json"))).json();
-        $("c-prompt").value = s.prompt; $("c-answer").value = s.answer; $("c-track").value = "h0";
-        $("c-status").textContent = "loaded slide answer · " + s.ho_composition;
-      } catch (e) { $("c-status").textContent = "slide_demo.json unavailable"; }
-    });
-
-    // certify the current prompt/answer -> drives the Case / Proof / Verdict views
-    $("c-certify").addEventListener("click", async () => {
-      const btn = $("c-certify"); btn.disabled = true; $("c-status").textContent = "running the causal battery…";
-      try {
-        const r = await fetch(apiUrl("api/certify_answer"), {
+        const r = await fetch(apiUrl("api/answer"), {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: $("c-prompt").value, answer: $("c-answer").value,
-                                 track: $("c-track").value, bedrock: $("c-bedrock").checked }) });
+          body: JSON.stringify({ prompt: $c("c-prompt").value }) });
         const d = await r.json();
         if (d.error) throw new Error(d.error);
-        window.CARD = d.CARD; recomputeState(); setLiveBadge(true); renderAll(); goToView("case");
-        $("c-status").textContent = d.CARD.coverage.summary + " · scope " + (d.CARD.certification_scope || {}).level;
-        showOut(d.CARD.claims.map((c) => (c.verdict + "  " + (c.concept || "—") + "  " + (c.contrast || (c.reason || ""))).trim()).join("\n"));
-      } catch (e) { $("c-status").textContent = "failed: " + e.message; }
-      btn.disabled = false;
+        $c("c-answer").value = d.answer;
+        setStatus("answer ready — press Run certify →");
+      } catch (e) { setStatus("submit failed: " + e.message); }
+      b.disabled = false;
     });
 
-    // MCP verb buttons -> raw verb output
-    document.querySelectorAll(".console-verbs button[data-verb]").forEach((b) => {
+    // Hypothesis -> optimize the prompt and refill the prompt box
+    $c("c-hypothesis").addEventListener("click", async () => {
+      const b = $c("c-hypothesis"); b.disabled = true; setStatus("optimizing the prompt…");
+      try {
+        const cov = window.CARD && window.CARD.coverage ? window.CARD.coverage.summary : "";
+        const r = await fetch(apiUrl("api/optimize_prompt"), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: $c("c-prompt").value, coverage: cov }) });
+        const d = await r.json();
+        if (d.error) throw new Error(d.error);
+        $c("c-prompt").value = d.prompt;
+        setStatus("prompt optimized ↺ — Submit again to re-infer");
+      } catch (e) { setStatus("optimize failed: " + e.message); }
+      b.disabled = false;
+    });
+
+    $c("c-certify").addEventListener("click", runCertify);
+
+    // MCP verb chips -> raw verb output in the console tray
+    document.querySelectorAll(".verbchips button[data-verb]").forEach((b) => {
       b.addEventListener("click", async () => {
-        const verb = b.dataset.verb; b.disabled = true; $("c-status").textContent = verb + "…";
+        const verb = b.dataset.verb; b.disabled = true; setStatus(verb + "…");
         try {
           const r = await fetch(apiUrl("api/verb/" + verb), {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ track: $("c-track").value, question: $("c-prompt").value }) });
+            body: JSON.stringify({ track: $c("c-track").value, question: $c("c-prompt").value }) });
           const d = await r.json();
           if (d.error) throw new Error(d.error);
-          showOut(d.result); $("c-status").textContent = verb + " ✓";
-        } catch (e) { $("c-status").textContent = verb + " failed: " + e.message; }
+          showOut(d.result); setStatus(verb + " ✓");
+        } catch (e) { setStatus(verb + " failed: " + e.message); }
         b.disabled = false;
       });
     });
@@ -780,20 +818,18 @@
 
   // ---------------------------------------------------------------- init
   function init() {
-    // Render the static mock IMMEDIATELY so the page never blanks, then upgrade to
-    // live data in the background when /api/all returns (~15s) and re-render.
+    // Start BLANK: the evidence card is empty until the user submits + certifies.
+    document.body.classList.add("no-card");
     setLiveBadge(false);
-    renderAll();
 
     initNavigation();
     initConsole();
-    goToView("case");
 
     document.getElementById("claim-prev").addEventListener("click", () => selectClaim(selectedIdx - 1));
     document.getElementById("claim-next").addEventListener("click", () => selectClaim(selectedIdx + 1));
-    document.getElementById("btn-run").addEventListener("click", runCertifyAnimation);
+    document.getElementById("btn-run").addEventListener("click", runCertify);
 
-    bootstrapData().then((ok) => { if (ok) renderAll(); });
+    goToView("prompt");   // land on the Prompt section
 
     window.addEventListener("resize", () => {
       renderHistology();

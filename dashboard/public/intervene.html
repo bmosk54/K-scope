@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>BioLayer — Intervention Studio</title>
+<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="intervene.css" />
+<script src="d3.v7.min.js"></script>
+</head>
+<body data-palette="#4f7ae0,#cf7a3c">
+<div class="studio">
+
+  <!-- ============================================================ TOPBAR -->
+  <header class="studio-top">
+    <div class="studio-brand">
+      <a class="back-link" href="./" title="back to the evidence cockpit">←</a>
+      <div class="brand-mark">BL</div>
+      <div>
+        <div class="studio-title">Intervention Studio</div>
+        <div class="studio-sub">apply a causal action to a concept axis and watch it propagate, layer by layer</div>
+      </div>
+    </div>
+    <div class="studio-meta">
+      <span class="substrate-chip" id="substrate-chip">○ mock · phikon-v2 · ViT-L/24</span>
+      <a class="top-link" href="lab.html">Certify Console ↗</a>
+    </div>
+  </header>
+
+  <div class="studio-body">
+
+    <!-- ==================================================== CONCEPT RAIL -->
+    <aside class="rail">
+      <div class="rail-head">
+        <span class="rail-title">Concept factors</span>
+        <span class="rail-count" id="rail-count">—</span>
+      </div>
+      <div class="rail-hint">every certifiable claim in the answer is a steerable axis in the encoder</div>
+      <div class="concept-list" id="concept-list"></div>
+      <div class="rail-foot" id="rail-foot"></div>
+    </aside>
+
+    <!-- ==================================================== STAGE (canvas) -->
+    <main class="stage">
+
+      <div class="stage-head">
+        <div class="stage-head-l">
+          <div class="stage-concept" id="stage-concept">—</div>
+          <div class="stage-contrast" id="stage-contrast">—</div>
+        </div>
+        <div class="stage-head-r">
+          <div class="verdict-pill" id="stage-verdict">—</div>
+        </div>
+      </div>
+
+      <!-- action bar: pick the causal action + intervention strength -->
+      <div class="action-bar">
+        <div class="seg" id="action-seg">
+          <button class="seg-btn active" data-action="ablate">
+            <span class="seg-name">Ablate</span><span class="seg-tag">necessity</span>
+          </button>
+          <button class="seg-btn" data-action="steer">
+            <span class="seg-name">Steer</span><span class="seg-tag">sufficiency</span>
+          </button>
+          <button class="seg-btn" data-action="specificity">
+            <span class="seg-name">Specificity</span><span class="seg-tag">off-target</span>
+          </button>
+        </div>
+        <div class="strength">
+          <label for="strength-slider">strength</label>
+          <input type="range" id="strength-slider" min="0" max="100" value="100" />
+          <span class="strength-val" id="strength-val">100%</span>
+        </div>
+        <button class="rerun" id="rerun-btn" title="recompute this action on the live substrate">⟳ live</button>
+      </div>
+
+      <!-- the hero: encoder depth column with per-layer interventions -->
+      <div class="canvas-wrap">
+        <div id="depth-canvas" class="depth-canvas"></div>
+        <div class="canvas-legend" id="canvas-legend"></div>
+      </div>
+
+      <div class="stage-caption" id="stage-caption">—</div>
+    </main>
+
+    <!-- ==================================================== READOUT PANEL -->
+    <aside class="readout">
+      <div class="ro-head">Model readout</div>
+      <div class="ro-sub" id="ro-sub">what the decision head does under this intervention</div>
+
+      <div class="meter-block">
+        <div class="meter-poles">
+          <span id="meter-neg">contrast</span>
+          <span id="meter-pos">concept</span>
+        </div>
+        <div class="meter-track" id="meter-track">
+          <div class="meter-fill" id="meter-fill"></div>
+          <div class="meter-needle" id="meter-needle"></div>
+          <div class="meter-mid"></div>
+        </div>
+        <div class="meter-caption" id="meter-caption">—</div>
+      </div>
+
+      <div class="pillars" id="pillars"></div>
+
+      <div class="bite-callout" id="bite-callout"></div>
+
+      <div class="ledger-block">
+        <div class="ledger-head">
+          <span>Actions behind this verdict</span>
+          <span class="ledger-verdict" id="ledger-verdict">—</span>
+        </div>
+        <div class="ledger-hint">every dynamic action that fired, with its layer-by-layer bite</div>
+        <div class="ledger" id="ledger"></div>
+      </div>
+
+      <div class="ro-caveat" id="ro-caveat">
+        A latent do() edits the model's <em>representation</em>, not tissue — this certifies
+        model-internal causal use, not biology. That is what the confound gate guards.
+      </div>
+    </aside>
+
+  </div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script src="data.js"></script>
+<script src="intervene.js"></script>
+</body>
+</html>

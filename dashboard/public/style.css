@@ -353,3 +353,40 @@ body {
   display: none; }
 .console-out.show { display: block; }
 .console-status { font-size: 11.5px; color: #7a80a4; margin-left: 4px; }
+
+/* -------- inference console (slide -> answer -> certify) -------- */
+.infer-grid { display: grid; grid-template-columns: 260px 1fr; gap: 18px; align-items: start; }
+.col-label { font-size: 10.5px; color: #7a80a4; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 5px; }
+.dimlabel { color: #656b8c; text-transform: none; letter-spacing: 0; font-size: 11px; }
+.slide-col .slide-img { width: 100%; border-radius: 8px; border: 1px solid #2a3050; display: block; }
+.slide-meta { font-size: 11px; color: #8a90b4; margin-top: 6px; line-height: 1.45; }
+.io-col { min-width: 0; }
+.io-prompt { width: 100%; min-height: 46px; resize: vertical; background: #0b0e1c; color: #e7e9f5;
+  border: 1px solid #2d3355; border-radius: 8px; padding: 8px 11px; font: inherit; font-size: 13px; }
+.io-answer { width: 100%; min-height: 92px; resize: vertical; background: #0b0e1c; color: #cfe3d8;
+  border: 1px solid #2d3355; border-radius: 8px; padding: 9px 11px; font: inherit; font-size: 12.5px; line-height: 1.5; margin-bottom: 8px; }
+.io-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 7px 0; }
+.console select { background: #0b0e1c; color: #e7e9f5; border: 1px solid #2d3355; border-radius: 7px; padding: 6px 8px; font: inherit; font-size: 12px; }
+.console button { background: #6c8dfb; color: #08102a; border: 0; border-radius: 7px; padding: 7px 13px; font: inherit; font-weight: 600; font-size: 12.5px; cursor: pointer; }
+.console button.ghost { background: #222846; color: #cfd4f0; font-weight: 500; }
+.console button:disabled { opacity: .5; cursor: default; }
+.verbchips { display: flex; gap: 5px; flex-wrap: wrap; margin-left: auto; }
+.verbchips .chip { background: #171c34; color: #9aa6d8; border: 1px solid #2a3157; padding: 4px 9px; font-size: 11px; font-weight: 500; border-radius: 999px; }
+.verbchips .chip:hover { background: #212a4a; }
+.console-status { font-size: 11.5px; color: #8a90b4; }
+
+/* blank until a card exists */
+.no-card .claim-strip, .no-card .view-wrap > .view { display: none !important; }
+.empty-state { display: none; text-align: center; padding: 64px 20px; color: #7e84a8; }
+.no-card .empty-state { display: block; }
+.empty-mark { font-size: 40px; color: #39406a; margin-bottom: 10px; }
+.empty-title { font-size: 16px; color: #b6bce0; margin-bottom: 8px; }
+.empty-sub { font-size: 12.5px; max-width: 520px; margin: 0 auto; line-height: 1.6; }
+
+/* -------- Prompt view = the inference console; card views gated -------- */
+.console { display: none; }
+body[data-view="prompt"] .console { display: block; }
+body[data-view="prompt"] .claim-strip,
+body[data-view="prompt"] .view-wrap { display: none; }
+/* on card views without a card, show the empty-state guidance */
+.no-card .claim-strip { display: none; }
