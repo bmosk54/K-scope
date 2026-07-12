@@ -16,9 +16,22 @@ cd "$(dirname "$0")"
 export PORT="${PORT:-4173}"
 export PYTHON="${PYTHON:-python3}"
 
-# Pull the prebuilt patch galleries (cached in S3, not in git — they embed JPEG crops and
-# run 15-22 MB each) into public/ so the Slide Gallery resolves without a rebuild.
-# Best-effort: won't block startup if boto3/creds are absent.
+# Pick a Python with the backend libs — numpy (certify bridge) + boto3 (gallery fetch).
+# server.js inherits this exported PYTHON for the certify bridge, so one capable interpreter
+# covers both. If none is found, warn upfront (and each tool re-warns at point of use).
+for cand in "$PYTHON" python3 "$HOME/miniconda3/envs/owkin-env/bin/python"; do
+  if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import numpy, boto3' 2>/dev/null; then
+    PYTHON="$cand"; export PYTHON; break
+  fi
+done
+if ! "$PYTHON" -c 'import numpy' 2>/dev/null; then
+  echo "WARNING: '$PYTHON' is missing backend libs (numpy) — certify and the Slide Gallery" >&2
+  echo "         will be unavailable. Fix: pip install -r requirements.txt boto3, or point" >&2
+  echo "         PYTHON at a capable interpreter: PYTHON=<python> bash dashboard/serve.sh" >&2
+fi
+
+# Pull the prebuilt patch galleries (cached in S3, not in git — 15-22 MB each) into public/
+# so the Slide Gallery resolves without a rebuild. Best-effort: won't block startup.
 "$PYTHON" fetch_galleries.py || true
 
 pkill -f "node server.js" 2>/dev/null || true

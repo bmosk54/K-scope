@@ -55,14 +55,30 @@ def download(force=False):
 
 
 def main():
+    # 1) missing library — the most common cause; give the exact fix, don't just fail silently.
+    try:
+        import boto3  # noqa: F401
+    except ImportError:
+        print(f"[fetch_galleries] WARNING — boto3 is not installed in this Python "
+              f"({sys.executable}); the Slide Gallery will be empty.\n"
+              f"  fix: pip install boto3   — or start the dashboard with a boto3-capable Python:\n"
+              f"       PYTHON=<python-with-boto3> bash dashboard/serve.sh", file=sys.stderr)
+        return
+    # 2) run; distinguish a missing-credentials warning from any other failure.
     try:
         if "--upload" in sys.argv[1:]:
             upload()
         else:
             download(force="--force" in sys.argv[1:])
     except Exception as e:  # noqa: BLE001 — best-effort: never block the dashboard from starting
-        print(f"[fetch_galleries] skipped ({type(e).__name__}: {e}); the Slide Gallery will be "
-              f"empty until galleries are fetched from s3://{BUCKET}/{PREFIX}", file=sys.stderr)
+        name = type(e).__name__
+        if name in ("NoCredentialsError", "PartialCredentialsError", "CredentialRetrievalError"):
+            print("[fetch_galleries] WARNING — no AWS credentials found; can't reach the S3 "
+                  "gallery cache. Source your creds and re-run (e.g. `source .owkin_hack_aws.sh`).",
+                  file=sys.stderr)
+        else:
+            print(f"[fetch_galleries] WARNING — {name}: {e}; the Slide Gallery will be empty "
+                  f"until galleries are fetched from s3://{BUCKET}/{PREFIX}", file=sys.stderr)
 
 
 if __name__ == "__main__":

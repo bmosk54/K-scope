@@ -231,6 +231,17 @@ def main():
             out = {"CARD": build_card(a.prompt, a.answer, track=a.track,
                                       use_bedrock=a.bedrock, fast=True)}
         sys.stdout.write(json.dumps(out, default=str))
+    except ImportError as e:
+        # missing certify backend lib (numpy, torch, sklearn, biolayer, …) — give the fix,
+        # not a bare stack trace. server.js surfaces this as the /api error the UI shows.
+        mod = getattr(e, "name", None) or str(e)
+        msg = (f"certify backend library '{mod}' is not installed in this Python "
+               f"({sys.executable}). Install the backend deps (pip install -r requirements.txt) "
+               f"or run the dashboard with a backend-capable Python: "
+               f"PYTHON=<python-with-{mod}> bash dashboard/serve.sh")
+        print(f"[bridge] WARNING — {msg}", file=sys.stderr)
+        sys.stdout.write(json.dumps({"error": msg}))
+        sys.exit(1)
     except Exception as e:
         sys.stdout.write(json.dumps({"error": f"{type(e).__name__}: {e}"}))
         sys.exit(1)
