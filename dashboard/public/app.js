@@ -662,7 +662,7 @@
 
   function initNavigation() {
     d3.selectAll(".nav-item").on("click", function () {
-      goToView(this.dataset.view);
+      if (this.dataset.view) goToView(this.dataset.view);  // link tiles (e.g. Studio) navigate via href
     });
   }
 

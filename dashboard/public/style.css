@@ -72,6 +72,9 @@ body {
 .nav-item:hover { color: var(--text); background: rgba(255, 255, 255, 0.03); }
 .nav-item.active { color: var(--text); background: rgba(108, 141, 251, 0.12); }
 .nav-item.active .nav-idx { color: var(--accent); }
+a.nav-item.nav-link { color: var(--text-dim); text-decoration: none; }
+.nav-link .nav-ext { margin-left: auto; font-size: 11px; color: var(--text-faint); }
+.nav-link:hover .nav-ext { color: var(--accent); }
 
 .sidebar-foot { margin-top: auto; padding-top: 18px; border-top: 1px solid var(--border); }
 .sidebar-foot-line { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); }

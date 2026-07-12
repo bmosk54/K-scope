@@ -73,11 +73,26 @@ def adapt_card(card):
         claims.append({"id": _slug(s.get("text")), "claim": s.get("text"),
                        "concept": s.get("concept"), "verdict": "NOT_CERTIFIABLE",
                        "reason": s.get("reason")})
+    # dedupe: one row per concept (same concept -> identical scores, so repeats are noise).
+    # declined rows dedupe by their text/reason instead of (null) concept.
+    seen, uniq = set(), []
+    for c in claims:
+        key = ("nc:" + (c.get("reason") or c.get("claim") or "")) if c["verdict"] == "NOT_CERTIFIABLE" \
+            else ("c:" + str(c.get("concept")))
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(c)
+    claims = uniq
+    n_cert = sum(1 for c in claims if c.get("scores"))
+    coverage = {"claims_total": len(claims), "certifiable": n_cert,
+                "not_certifiable": len(claims) - n_cert,
+                "summary": f"{n_cert} of {len(claims)} distinct claims certifiable"}
     return {
         "schema_version": card.get("schema_version"),
         "prompt": card.get("prompt"), "answer": card.get("answer"),
         "track": card.get("track"), "preferred_substrate": card.get("preferred_substrate"),
-        "split": card.get("split"), "coverage": card.get("coverage"),
+        "split": card.get("split"), "coverage": coverage,
         "certification_scope": card.get("certification_scope"),
         "guardrails": card.get("guardrails"), "assumptions": card.get("assumptions"),
         "caveat": card.get("caveat"), "claims": claims,

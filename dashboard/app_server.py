@@ -39,9 +39,11 @@ DEFAULT_Q = "Assess the tumor-infiltrating lymphocyte response and stromal desmo
 _KPRO_SYS = (
     "You are K-Pro, a pathology foundation model reading a colorectal H&E slide. You are "
     "given the slide's tissue composition as classified by the encoder. Answer the "
-    "pathologist's question in 2-4 sentences of concrete morphology, grounded ONLY in the "
-    "composition given — name the tissue compartments and the immune pattern; do not invent "
-    "findings the composition does not support.")
+    "pathologist's question in 2-3 plain sentences — NO headings, NO markdown, NO report "
+    "format. Anchor on the tissue composition, but characterize like a pathologist: name "
+    "the compartments once each, and where relevant describe the immune infiltrate at the "
+    "CELLULAR level (lymphocytes, plasma cells, eosinophils), mitotic activity / nuclear "
+    "grade, and any necrosis. Mention each finding only once. Be specific and clinical.")
 _OPT_SYS = (
     "You refine a pathology question so it is SPECIFIC and answerable against tile-level "
     "tissue concepts the certifier can ground: tumor epithelium, lymphocytic/immune "
