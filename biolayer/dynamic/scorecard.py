@@ -50,6 +50,7 @@ class ClaimScore:
     intervened_on_input: bool
     survives_correction: bool = False   # set by Holm pass over the answer
     contrast_capped: bool = False       # verdict capped because the contrast failed the gate
+    necessity_capped: bool = False      # GROUNDED denied: no genuine (non-readout/live) necessity
     notes: list = field(default_factory=list)
 
     @property
@@ -173,12 +174,35 @@ def score_claim(concept, bc, layered, confound_result, intervened_on_input=False
         notes.append("certified on reference-set separability, NOT on this input's "
                      "forward pass — pass live_ctx for the per-slide intervention")
 
-    # Roll-up: sufficiency is the clean, load-bearing signal on this substrate;
-    # necessity is reported honestly as redundancy-limited and does not veto.
+    # Roll-up. Sufficiency is the clean, de-circularized signal (concept flip vs a
+    # matched-random null), but ON ITS OWN it is near-circular: you inject the
+    # class-mean-diff axis and score a probe built on it. So a GROUNDED verdict must ALSO
+    # rest on a GENUINE, non-tautological necessity — either the live per-slide
+    # source-intervention, or a cached necessity that bites at a NON-readout layer (real
+    # distributed necessity). Readout-only necessity is near-tautological (projecting out a
+    # ~1-D probe's own axis always collapses it), so it can NOT promote GROUNDED. This is
+    # what stops a WEAK necessity + near-circular sufficiency from certifying GROUNDED.
+    # Genuine necessity = the LIVE source-intervention ONLY. The cached layered curve is
+    # near-tautological at EVERY layer (projecting a probe's own axis out of the space it
+    # was fit in always collapses it; it cannot model downstream recompute), so a
+    # non-readout cached "bite" is NOT genuine evidence. Only a live forward-pass recompute
+    # whose necessity verdict actually GROUNDED can promote the claim.
+    genuine_necessity = intervened_on_input and nec.verdict == GROUNDED
+    necessity_capped = False
     if suf.verdict == NULL and nec.verdict == NULL:
         verdict = NULL
     elif suf.verdict == GROUNDED and spec.verdict != NULL:
-        verdict = GROUNDED
+        if genuine_necessity:
+            verdict = GROUNDED
+        else:
+            verdict = WEAK
+            necessity_capped = True
+            notes.append(
+                "capped at WEAK: sufficiency + specificity pass, but necessity is the "
+                "near-tautological readout-space projection (no live / non-readout bite) — "
+                "a GROUNDED verdict must not rest on near-circular sufficiency alone. Pass "
+                "live_ctx for the per-slide source-intervention, or run the layered sweep "
+                "(fast=False) to measure genuine distributed necessity.")
     else:
         verdict = WEAK
     if confounded and verdict == GROUNDED:
@@ -198,7 +222,8 @@ def score_claim(concept, bc, layered, confound_result, intervened_on_input=False
 
     return ClaimScore(concept=concept, pillars=pillars, verdict=verdict,
                       confounded=confounded, intervened_on_input=intervened_on_input,
-                      contrast_capped=contrast_capped, notes=notes)
+                      contrast_capped=contrast_capped, necessity_capped=necessity_capped,
+                      notes=notes)
 
 
 def holm_correction(claim_scores, alpha=0.05):
