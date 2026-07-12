@@ -106,6 +106,26 @@ body { background: var(--studio-bg); }
 .intervened-badge { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 .ioi { font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--success);
   background: rgba(61,220,151,.1); border: 1px solid rgba(61,220,151,.3); border-radius: 999px; padding: 3px 10px; }
+.ioi.off { color: var(--text-faint); background: rgba(255,255,255,.03); border-color: var(--border); }
+
+/* cached-mode panel — a certifiable claim with no live layer curve. Real scores + gate +
+   an honest note, filling the deck area so the stage is informative, never blank. */
+.cached-panel { margin: auto; max-width: 460px; width: 100%; border: 1px solid var(--border-strong);
+  border-radius: 16px; padding: 22px 24px; background: linear-gradient(150deg, var(--panel-2), var(--panel));
+  box-shadow: 0 22px 42px rgba(0,0,0,.4); }
+.cp-head { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.cp-verdict { font-family: var(--mono); font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 999px; }
+.cp-contrast { font-family: var(--mono); font-size: 12px; color: var(--text-faint); }
+.cp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+.cp-tile { text-align: center; border: 1px solid var(--border); border-radius: 10px; padding: 12px 6px; background: var(--panel); }
+.cp-k { font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); }
+.cp-v { font-family: var(--mono); font-size: 24px; font-weight: 600; margin-top: 4px; color: var(--text); }
+.cp-gate { display: flex; gap: 18px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-dim);
+  font-family: var(--mono); padding: 12px 0; border-top: 1px solid var(--border); }
+.cp-gate b { color: var(--text); }
+.cp-warn { color: var(--warning); font-style: normal; }
+.cp-note { font-size: 11.5px; color: var(--text-faint); line-height: 1.55; border-top: 1px solid var(--border); padding-top: 12px; }
+.cp-note b { color: var(--text-dim); } .cp-note code { font-family: var(--mono); color: var(--ink-on); }
 
 /* LAYER STRIP — pick where in the computation to ablate (depth, not location) */
 .layerstrip-wrap { margin: 16px 0 12px; }

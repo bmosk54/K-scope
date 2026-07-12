@@ -112,10 +112,10 @@ def adapt_card(card):
 
 
 def build_card(prompt=DEMO_PROMPT, answer=DEMO_ANSWER, track="phikon",
-               use_bedrock=False, fast=True, n_null=100):
+               use_bedrock=False, fast=True, n_null=100, live_ctx=None):
     from biolayer.mcp import verbs
     card = verbs.certify_answer(prompt, answer, track=track, n_null=n_null,
-                                fast=fast, use_bedrock=use_bedrock)
+                                fast=fast, use_bedrock=use_bedrock, live_ctx=live_ctx)
     return adapt_card(card)
 
 

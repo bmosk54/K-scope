@@ -231,6 +231,24 @@
           </div>
         </div>
 
+        <!-- ======= input tile: the loop runs on THIS tile; overlay updates each iter ======= -->
+        <div class="rr-tile-panel">
+          <div class="rr-tile-head">
+            <span class="rr-sec-label">Input tile · the loop probes concepts on this tile</span>
+            <span class="rr-tile-legend" id="rr-tile-legend"></span>
+          </div>
+          <div class="rr-tile-body">
+            <canvas id="rr-tile-canvas" width="224" height="224" class="rr-tile-canvas"
+                    title="where the current probe fires on the input tile"></canvas>
+            <div class="rr-tile-side">
+              <div class="rr-tile-iter" id="rr-tile-iter">idle</div>
+              <div class="rr-tile-cap" id="rr-tile-cap">Run the loop — each iteration overlays where the probed
+                concept fires on this tile (warm = toward the concept, cool = toward its contrast, dark = weak).
+                Hover a patch for its rank.</div>
+            </div>
+          </div>
+        </div>
+
         <!-- ======= pipeline visualization: the autonomous discovery loop ======= -->
         <div class="rr-pipeline" id="rr-pipeline">
           <div class="rr-pipe-track">

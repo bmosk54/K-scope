@@ -67,11 +67,38 @@ def _slide():
         return {"ho_composition": "", "prompt": DEFAULT_Q}
 
 
+# ---- live source-intervention context (lazy) ------------------------------
+# GROUNDED now requires GENUINE necessity (a live edit on the input's forward pass),
+# not the cached readout-space read — so the dashboard supplies a live_ctx: the warm
+# frozen phikon-v2 encoder + a fixed NCT-CRC tissue reference set (serving.py). Warmed
+# once on first use; degrades to None (all-WEAK cached path) if anything is unavailable.
+_LIVE = {"ctx": None, "tried": False}
+
+
+def _live_ctx():
+    if _LIVE["tried"]:
+        return _LIVE["ctx"]
+    _LIVE["tried"] = True
+    try:
+        from biolayer import serving
+        serving.warmup("phikon_v2")
+        _LIVE["ctx"] = serving.live_ctx("phikon_v2")
+        print("[app_server] live source-intervention ready (phikon-v2 + tissue reference)", flush=True)
+    except Exception:
+        traceback.print_exc()
+        _LIVE["ctx"] = None
+    return _LIVE["ctx"]
+
+
 # ---- MCP verb dispatch (all warm) -----------------------------------------
 def _certify_answer(a):
+    # live_ctx only matches the phikon-v2 substrate (its encoder + tissue reference); use it
+    # by default so tissue concepts can earn GROUNDED. Pass {"live": false} to force cached.
+    track = a.get("track", "phikon")
+    ctx = _live_ctx() if (track == "phikon" and a.get("live", True)) else None
     return {"CARD": bridge.build_card(
         a.get("prompt", DEFAULT_Q), a.get("answer", bridge.DEMO_ANSWER),
-        track=a.get("track", "phikon"), use_bedrock=bool(a.get("bedrock", False)))}
+        track=track, use_bedrock=bool(a.get("bedrock", False)), live_ctx=ctx)}
 
 
 def _model_key(a):

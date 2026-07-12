@@ -76,14 +76,20 @@
     if (tr && tr.blocks) state.blocks = tr.blocks;
     // default selection: first interventable claim (falls back to first claim)
     if (!state.all.some((c) => c.id === state.selectedId)) {
-      const first = state.all.find(isInterventable) || state.all[0];
+      const first = state.all.find(hasCurve) || state.all.find(isCertifiable) || state.all[0];
       state.selectedId = first ? first.id : null;
     }
   }
 
   const selected = () => state.all.find((c) => c.id === state.selectedId) || null;
-  const isInterventable = (c) =>
-    !!(c && c.scores && c.live_necessity && Array.isArray(c.live_necessity.curve) && c.live_necessity.curve.length);
+  // Two distinct states: a claim can have a LIVE per-block curve to scrub (the 3D deck),
+  // OR merely be CERTIFIABLE (has pillar scores but no source-intervention curve — the
+  // common case, since the dashboard certify runs without live_ctx). Certifiable-but-no-
+  // curve claims must STILL render a useful stage (scores + gate + trace), never blank.
+  const hasCurve = (c) =>
+    !!(c && c.live_necessity && Array.isArray(c.live_necessity.curve) && c.live_necessity.curve.length);
+  const isCertifiable = (c) => !!(c && c.scores && Object.keys(c.scores).length);
+  const isInterventable = hasCurve;   // kept name: "interventable" == a live curve exists
   // Coerce every point's gap/z to a finite number here so downstream .toFixed() calls
   // (sheets, tooltips, ledger, caveat) can never throw on a live curve missing a field.
   const num = (v) => (typeof v === "number" && isFinite(v) ? v : 0);
@@ -117,16 +123,19 @@
   function buildRail() {
     const host = $("concept-list"); host.innerHTML = "";
     state.all.forEach((c) => {
-      const inter = isInterventable(c);
+      const inter = hasCurve(c);
+      const cert = isCertifiable(c);
       const card = document.createElement("div");
       card.className = "concept-card " + verdictClass(c.verdict) +
-        (c.id === state.selectedId ? " active" : "") + (inter ? "" : " declined");
+        (c.id === state.selectedId ? " active" : "") + (cert ? "" : " declined");
       card.dataset.id = c.id;
 
       let sub = "";
       if (c.verdict === "WEAK" && capR(c) != null) {
         sub = `<div class="cc-note warn">capped · rides intensity |r| = ${capR(c).toFixed(3)}</div>`;
-      } else if (!inter) {
+      } else if (cert && !inter) {
+        sub = `<div class="cc-note dim">cached necessity · no live layer curve</div>`;
+      } else if (!cert) {
         sub = `<div class="cc-note dim">${esc(c.reason || "no axis to intervene on")}</div>`;
       }
 
@@ -136,11 +145,12 @@
            <span class="cc-verdict ${verdictClass(c.verdict)}">${c.verdict}</span>
          </div>
          <div class="cc-contrast">${esc(c.contrast || (c.concept ? c.concept.replace(/_/g, " ") : "—"))}</div>
-         ${inter ? `<div class="cc-gaps" id="ccg-${c.id}"></div>` : ""}
+         ${(inter || cert) ? `<div class="cc-gaps" id="ccg-${c.id}"></div>` : ""}
          ${sub}`;
       card.addEventListener("click", () => selectClaim(c.id));
       host.appendChild(card);
       if (inter) paintCardGaps(c);
+      else if (cert) paintCardScores(c);
     });
   }
 
@@ -151,6 +161,18 @@
     host.innerHTML = curve.map((p) =>
       `<span class="ccg-bar" style="height:${(4 + 18 * (p.gap / max)).toFixed(1)}px;background:${p.bites ? V[c.verdict] : "var(--border-strong)"}"></span>`
     ).join("");
+  }
+
+  // rail sparkline for a certifiable claim with NO live curve: the three pillar scores
+  // (necessity / sufficiency / specificity), so the card is informative, not blank.
+  function paintCardScores(c) {
+    const host = $("ccg-" + c.id); if (!host) return;
+    const sc = c.scores || {};
+    const vals = [sc.necessity, sc.sufficiency, sc.specificity].map((v) => (typeof v === "number" ? v : 0));
+    host.innerHTML = vals.map((v) => {
+      const h = 4 + 18 * clamp(v, 0, 1);
+      return `<span class="ccg-bar" style="height:${h.toFixed(1)}px;background:${v > 0.5 ? V[c.verdict] : "var(--border-strong)"}"></span>`;
+    }).join("");
   }
 
   function selectClaim(id) {
@@ -172,24 +194,69 @@
     $("stage-contrast").textContent = c ? ((c.concept ? c.concept.replace(/_/g, " ") + "  ·  " : "") + (c.contrast || "")) : "";
     const vp = $("stage-verdict"); vp.textContent = c ? c.verdict : "—"; vp.className = "verdict-pill " + verdictClass(c && c.verdict);
 
-    const inter = isInterventable(c);
+    const inter = hasCurve(c);
+    const cert = isCertifiable(c);
     const ioi = inter && c.live_necessity.intervened_on_input;
     $("intervened-badge").innerHTML = ioi
       ? `<span class="ioi on" title="the do() was applied on this slide's forward pass, not a cached embedding">✓ intervened_on_input · per-slide forward pass</span>`
-      : "";
+      : (cert ? `<span class="ioi off" title="certify ran without live_ctx — necessity is the cached readout-space score">○ cached necessity · no per-slide forward pass</span>` : "");
 
-    // toggle the ablation UI vs a declined empty-state
-    ["deck-wrap", "control-bar"].forEach((idn) => { $(idn).style.display = inter ? "" : "none"; });
+    // the strength scrubber only makes sense with a live curve; the deck area is shown for
+    // both live and cached (cached fills it with the scores/gate panel), hidden only when declined.
+    $("control-bar").style.display = inter ? "" : "none";
+    $("deck-wrap").style.display = (inter || cert) ? "" : "none";
 
-    if (!inter) { renderDeclined(c); renderPillarsEmpty(); renderLedger(); return; }
+    if (inter) {
+      renderDeck(); renderReadout(); renderPillars(); renderBite();
+      renderLedger(); renderCaption(); renderDeckLegend();
+      return;
+    }
+    if (cert) {
+      renderCached(c); renderPillars(); renderLedger();
+      return;
+    }
+    renderDeclined(c); renderPillarsEmpty(); renderLedger();
+  }
 
-    renderDeck();
-    renderReadout();
-    renderPillars();
-    renderBite();
-    renderLedger();
-    renderCaption();
-    renderDeckLegend();
+  // Certifiable claim WITHOUT a live layer curve (certify ran without live_ctx). Show the
+  // REAL pillar scores + the contrast-gate result + the reasoning ledger, honestly badged
+  // "cached" — so a GROUNDED claim is never rendered as a blank / NOT-CERTIFIABLE box.
+  function renderCached(c) {
+    const sc = c.scores || {}, cv = c.contrast_validation || {}, rr = capR(c);
+    const f2 = (v) => (v != null && isFinite(v) ? (+v).toFixed(2) : "—");
+    $("deck3d").innerHTML =
+      `<div class="cached-panel">
+         <div class="cp-head">
+           <span class="cp-verdict ${verdictClass(c.verdict)}">${c.verdict}</span>
+           <span class="cp-contrast">${esc(c.contrast || (c.concept ? c.concept.replace(/_/g, " ") : "—"))}</span>
+         </div>
+         <div class="cp-grid">
+           ${[["necessity", sc.necessity], ["sufficiency", sc.sufficiency], ["specificity", sc.specificity]]
+             .map(([k, v]) => `<div class="cp-tile"><div class="cp-k">${k}</div><div class="cp-v">${f2(v)}</div></div>`).join("")}
+         </div>
+         <div class="cp-gate">
+           <span>held-out AUROC <b>${f2(cv.heldout_auroc)}</b></span>
+           <span>intensity |r| <b>${f2(rr)}</b>${rr != null && rr > 0.6 ? ' <i class="cp-warn">rides intensity → capped</i>' : ""}</span>
+         </div>
+         <div class="cp-note">Necessity here is the <b>cached readout-space</b> score. The per-block
+           live source-intervention curve (the depth stack you can scrub) needs the GPU forward-pass
+           path — re-run certify with <code>live_ctx</code> to get the layer-resolved intervention.</div>
+       </div>`;
+    $("readout-block").innerHTML =
+      `<div class="trace-caption">Certified in <b>cached mode</b> — necessity ${f2(sc.necessity)},
+       sufficiency ${f2(sc.sufficiency)}, specificity ${f2(sc.specificity)} (readout-space projection
+       vs matched-random null). Run the live path for the graded, layer-by-layer curve.</div>`;
+    $("bite-callout").innerHTML =
+      `Verdict <b>${c.verdict}</b> from the cached battery. ` +
+      (rr != null && rr > 0.6
+        ? `The contrast rides the intensity proxy (|r| ${f2(rr)}) — capped regardless of pillar scores.`
+        : `Contrast passed the validation gate (AUROC ${f2(cv.heldout_auroc)}, |r| ${f2(rr)}).`);
+    $("stage-caption").innerHTML =
+      "<b>Cached certification:</b> pillar scores come from the readout-space battery " +
+      "(concept-axis projection vs matched-random null). The layer-resolved <b>live</b> intervention — " +
+      "projecting the axis out at each block on this slide's forward pass — is not in this card; it needs " +
+      "the GPU <code>live_ctx</code> path." +
+      (state.source === "mock" ? ' <span class="src-warn">· offline mock card</span>' : "");
   }
 
   function renderDeclined(c) {

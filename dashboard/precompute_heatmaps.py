@@ -125,6 +125,57 @@ def load_phikon():
     return patch_grid
 
 
+def diverging_map(grid, pos, neg):
+    """Signed/diverging per-patch causal map for one (pos vs neg) axis on ONE patch grid.
+    + toward pos concept, - toward neg; magnitude = |z| vs the matched-random null."""
+    from collections import Counter
+    axis = concept_axis(pos, neg)
+    imp = attribution.patch_importance(grid, axis, n_null=N_NULL, seed=SEED)
+    zsigned = np.asarray(imp["z"]) * np.sign(np.asarray(imp["scores"]))
+    s = int(round(len(zsigned) ** 0.5))
+    signed = zsigned.reshape(s, s); mag = np.abs(signed)
+    lo, hi = float(mag.min()), float(mag.max())
+    norm = (mag - lo) / (hi - lo + 1e-9)
+    flat = signed.ravel(); top = int(np.argmax(flat))
+    posL, negL = CLASS_LABEL.get(pos, pos), CLASS_LABEL.get(neg, neg)
+
+    def _dir(p):
+        v = float(flat[p]); toward = pos if v >= 0 else neg
+        return {"patch": int(p), "row": int(p // s), "col": int(p % s),
+                "toward": toward, "label": CLASS_LABEL.get(toward, toward),
+                "pole": "pos" if v >= 0 else "neg", "z": round(v, 2)}
+    order = np.argsort(-mag.ravel()); hot = [int(p) for p in order[:8]]
+    return {
+        "pos": pos, "neg": neg, "pos_label": posL, "neg_label": negL, "grid_side": s,
+        "z_grid": np.round(signed, 3).tolist(), "norm_grid": np.round(norm, 4).tolist(),
+        "z_min": round(float(signed.min()), 3), "z_max": round(float(signed.max()), 3),
+        "top_z": round(float(imp["top_z"]), 2), "top_patch": top,
+        "n_patches": int(imp["n_patches"]), "n_null": N_NULL, "verdict": imp["verdict"],
+        "top_dir": _dir(top), "hot_dirs": [_dir(p) for p in hot],
+        "hot_share": dict(Counter(_dir(p)["toward"] for p in hot)),
+    }
+
+
+def build_input_tile_maps(patch_grid):
+    """Diverging maps for MANY concept axes, all on the ONE input tile the dashboard's
+    Case + AutoResearch views take as input — so AutoResearch can render, per loop
+    iteration, where the concept it just probed fires on THAT tile. Keyed by 'POS_NEG'."""
+    from PIL import Image
+    tile_path = os.path.join(OUT_DIR, "..", "input_tile.png")
+    if not os.path.exists(tile_path):
+        print("  (no input_tile.png — skipping input-tile maps)", flush=True); return
+    grid = patch_grid(Image.open(tile_path).convert("RGB"))
+    classes = ["TUM", "LYM", "STR", "NORM", "MUS", "MUC", "DEB", "ADI"]
+    axes = {}
+    for pos in classes:
+        for neg in classes:
+            if pos != neg:
+                axes[f"{pos}_{neg}"] = diverging_map(grid, pos, neg)
+    with open(os.path.join(OUT_DIR, "input_tile.json"), "w") as f:
+        json.dump({"tile": "input_tile.png", "axes": axes}, f)
+    print(f"  input-tile maps: {len(axes)} axes on input_tile.png -> input_tile.json", flush=True)
+
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     by_class = load_tiles()
@@ -204,6 +255,8 @@ def main():
     with open(os.path.join(OUT_DIR, "heatmaps.json"), "w") as f:
         json.dump(out, f, indent=2)
     print(f"wrote {os.path.join(OUT_DIR, 'heatmaps.json')} ({len(out)} concepts)", flush=True)
+
+    build_input_tile_maps(patch_grid)
 
 
 if __name__ == "__main__":

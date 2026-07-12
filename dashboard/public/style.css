@@ -518,8 +518,10 @@ body[data-view="gallery"] .claim-strip { display: none; }
 body[data-view="gallery"] .empty-state { display: none !important; }
 body[data-view="gallery"] #view-gallery { display: block; }
 .no-card #view-gallery.active { display: block !important; }
+/* the embedded gallery has its own header -> drop the redundant dashboard topbar here */
+body[data-view="gallery"] .topbar { display: none; }
 .gallery-frame {
-  width: 100%; height: calc(100vh - 120px); border: 1px solid var(--border);
+  width: 100%; height: calc(100vh - 64px); border: 1px solid var(--border);
   border-radius: 10px; background: var(--panel); display: block;
 }
 
@@ -811,3 +813,26 @@ body[data-view="gallery"] #view-gallery { display: block; }
 .rr-next b { color: var(--text-dim); }
 .rr-done { text-align: center; font-family: var(--mono); font-size: 10.5px; color: var(--success); padding: 8px; }
 .rr-done.max { color: var(--text-faint); }
+
+/* ---------------------------------------------------------------- AutoResearch input tile */
+.rr-tile-panel {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px 16px; margin: 14px 0;
+}
+.rr-tile-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+.rr-tile-legend { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 10px; }
+.rr-tile-legend .rr-leg-bar {
+  width: 90px; height: 7px; border-radius: 4px;
+  background: linear-gradient(90deg, #5a7bd6, #0b0a12 50%, #e06a6a);
+}
+.rr-tile-body { display: flex; gap: 16px; align-items: flex-start; }
+.rr-tile-canvas {
+  width: 260px; height: 260px; border-radius: 8px; border: 1px solid var(--border);
+  background: #1b1730; flex: none; image-rendering: auto; cursor: crosshair;
+}
+.rr-tile-side { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.rr-tile-iter { font-family: var(--mono); font-size: 12px; color: var(--text); }
+.rr-tile-iter b { color: #6c8dfb; }
+.rr-tile-cap { font-size: 12px; color: var(--text-faint); line-height: 1.55; }
+.rr-tile-cap b { color: var(--text); }
+@media (max-width: 720px) { .rr-tile-body { flex-direction: column; } .rr-tile-canvas { width: 100%; height: auto; aspect-ratio: 1; } }
