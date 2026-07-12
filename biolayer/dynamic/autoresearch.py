@@ -191,6 +191,14 @@ def _fresh_probe(class_names, seen):
     return _first_probe("", class_names, use_bedrock=False)
 
 
+def _step(it, max_iters, stage, text, data=None):
+    """One per-STAGE progress frame (probe/certify/locate/ablate/reflect) so the UI lights
+    the stage and streams reasoning text AS the loop works — not only when the whole
+    (multi-second) iteration lands."""
+    return {"type": "step", "iter": it, "max_iters": max_iters,
+            "stage": stage, "text": text, "data": data or {}}
+
+
 def iterate(problem, track="phikon", max_iters=5, n_null=60, use_bedrock=True,
             split="train", converge_score=0.95, live=False, screen=False):
     """Yield one research record per iteration of the autonomous causal loop.
@@ -206,6 +214,10 @@ def iterate(problem, track="phikon", max_iters=5, n_null=60, use_bedrock=True,
     region null — i.e. WHERE in the tile the readout causally reads from, not just which
     axis. It degrades to None (field left absent) if the live substrate is unavailable.
     """
+    yield _step(1, max_iters, "probe",
+                f"loading the {track} substrate and designing the opening probe for "
+                f"“{(problem or '')[:70]}”…", {})
+
     from .. import tracks as _tracks
     model = _tracks.get(track).model_key
     feats, labels, class_names, source = loader.load(model, split)
@@ -214,16 +226,26 @@ def iterate(problem, track="phikon", max_iters=5, n_null=60, use_bedrock=True,
     seen, strong_streak = set(), 0
 
     for i in range(max_iters):
+        it = i + 1
         if not _valid_probe(probe, class_names):
             probe = _first_probe(problem, class_names, use_bedrock=False)
         pos, neg = str(probe["pos"]), str(probe["neg"])
         dist = tuple(str(d) for d in (probe.get("distractor") or ["STR", "MUS"])[:2])
         seen.add(f"{pos}_vs_{neg}")
 
+        # STEP 1 — probe: the axis this iteration will interrogate
+        by = f" · proposed by {probe.get('proposed_by')}" if probe.get("proposed_by") else ""
+        rat = f" — {probe['rationale']}" if probe.get("rationale") else ""
+        yield _step(it, max_iters, "probe",
+                    f"probe {pos} vs {neg}{by}; distractor {dist[0]}/{dist[1]}, "
+                    f"matched-random null n={n_null}{rat}",
+                    {"concept": f"{pos}_vs_{neg}", "pos": pos, "neg": neg,
+                     "proposed_by": probe.get("proposed_by")})
+
+        # STEP 2 — certify: the causal battery (the heavy step)
         card = _certify.certify(feats, labels, class_names, pos, neg, dist, model,
                                 split, source, n_null=n_null,
                                 artifacts_dir=loader.ARTIFACTS_DIR)
-
         conf = card.get("confidence", {}) or {}
         score = float(conf.get("overall") or 0.0)
         # static certify pillars carry a `passed` bool + a numeric confidence; the
@@ -232,6 +254,20 @@ def iterate(problem, track="phikon", max_iters=5, n_null=60, use_bedrock=True,
                        "passed": bool(v.get("passed")),
                        "verdict": "PASS" if v.get("passed") else "—"}
                    for k, v in (card.get("pillars", {}) or {}).items() if v}
+        suf_ok = pillars.get("sufficiency", {}).get("passed", False)
+        spec_ok = pillars.get("specificity", {}).get("passed", False)
+        integrity = bool(conf.get("null_integrity", True))
+        verdict = ("GROUNDED" if (suf_ok and spec_ok and integrity and score >= 0.5)
+                   else "WEAK" if score > 0.0 else "NULL")
+        pill_txt = "  ".join(f"{k[:3]} {v['confidence']:.2f}{'✓' if v['passed'] else '✕'}"
+                             for k, v in pillars.items())
+        yield _step(it, max_iters, "certify",
+                    f"necessity × sufficiency × specificity vs the null → {verdict} "
+                    f"(score {score:.3f})   [{pill_txt}]"
+                    + ("" if integrity else "  ⚠ random null not inert — falsified"),
+                    {"verdict": verdict, "score": round(score, 3), "pillars": pillars})
+
+        # STEP 3 — locate: where in the stack the circuit lives
         circuit = None
         circuit_mode = "cached"
         if live:
@@ -241,15 +277,23 @@ def iterate(problem, track="phikon", max_iters=5, n_null=60, use_bedrock=True,
         if not circuit:
             circuit = _circuit_from_card(card)
         axis = _load_axis(circuit)
-        # SCREEN — spatial CRISPR knockout on a real tile (WHERE the readout reads from).
-        region_screen = _region_screen(model, pos, pos, neg, loader.ARTIFACTS_DIR) if screen else None
-        suf_ok = pillars.get("sufficiency", {}).get("passed", False)
-        spec_ok = pillars.get("specificity", {}).get("passed", False)
-        integrity = bool(conf.get("null_integrity", True))
-        verdict = ("GROUNDED" if (suf_ok and spec_ok and integrity and score >= 0.5)
-                   else "WEAK" if score > 0.0 else "NULL")
+        yield _step(it, max_iters, "locate",
+                    f"the {pos}-vs-{neg} circuit loads hardest at layer {axis['layer']} "
+                    f"(necessity gap {axis['necessity_gap']:.3f}; random null "
+                    f"{axis['random_ablated_acc']:.3f}) · {circuit_mode} curve",
+                    {"layer": axis["layer"], "mode": circuit_mode,
+                     "necessity_gap": round(axis["necessity_gap"], 4)})
 
-        # Reflect: read this card's score + trace, propose the next hypothesis/probe.
+        # STEP 4 — ablate: knock the axis out, measure the gap
+        region_screen = _region_screen(model, pos, pos, neg, loader.ARTIFACTS_DIR) if screen else None
+        ablate_note = (f"knocked out the {card.get('prediction', {}).get('concept')} axis @ "
+                       f"{axis['layer']}: probe {axis['probe_acc']:.3f} → "
+                       f"{axis['concept_ablated_acc']:.3f} (random null {axis['random_ablated_acc']:.3f})"
+                       f"{' — bites here' if axis['bites'] else ' — recomputed downstream (redundant)'}")
+        yield _step(it, max_iters, "ablate", ablate_note,
+                    {"layer": axis["layer"], "bites": axis["bites"], "note": ablate_note})
+
+        # STEP 5 — reflect: diagnose the weakest pillar, propose the next probe
         reflection = _pd.next_hypothesis(card, class_names, use_bedrock=use_bedrock)
         nxt = reflection.get("proposed_probe") or {}
         # don't loop on the same axis twice in a row — nudge to an unseen foil if repeated
@@ -263,8 +307,16 @@ def iterate(problem, track="phikon", max_iters=5, n_null=60, use_bedrock=True,
             # proposed probe was invalid or already certified — pick an unexplored
             # contrast so we never re-run the same axis two iterations running.
             next_probe = _fresh_probe(class_names, seen)
+        weak = reflection.get("weakest_pillar")
+        diag = reflection.get("diagnosis") or reflection.get("next_hypothesis") or ""
+        yield _step(it, max_iters, "reflect",
+                    (f"weakest pillar: {weak}. " if weak else "")
+                    + f"{diag} → next probe: {next_probe['pos']} vs {next_probe['neg']}",
+                    {"weakest_pillar": weak,
+                     "next_probe": {"pos": str(next_probe["pos"]), "neg": str(next_probe["neg"])}})
 
         yield {
+            "type": "iter",
             "iter": i + 1, "max_iters": max_iters, "problem": problem, "track": track,
             "concept": card.get("prediction", {}).get("concept"),
             "contrast": {"pos": pos, "neg": neg, "distractor": list(dist)},

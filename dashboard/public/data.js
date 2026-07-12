@@ -1,5 +1,5 @@
 /**
- * BioLayer demo data — MOCK, structured to match the real `certify_answer()`
+ * KScope demo data — MOCK, structured to match the real `certify_answer()`
  * evidence-card schema emitted by `biolayer/dynamic/certify_answer.py` and the
  * `design()` / cross-model battery outputs in `docs/RESULTS.md`.
  *
