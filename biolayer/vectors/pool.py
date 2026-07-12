@@ -93,7 +93,7 @@ def _axis_parts(axis):
 def concept_score(vec, axis):
     """Read-out of a (pooled) vector along a concept axis: standardize(vec)·direction."""
     d, m, s = _axis_parts(axis)
-    return float(_std(np.atleast_2d(vec), m, s) @ d)
+    return float((_std(np.atleast_2d(vec), m, s) @ d)[0])
 
 
 def pool_slide(vlist, axis, tau=1.0, group_key="slide", chunk=100_000):
