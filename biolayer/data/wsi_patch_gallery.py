@@ -99,9 +99,11 @@ def build_gallery(slide: str, patches, out_html: str, scratch: str,
             .replace("__SRCURI__", html.escape(slide))
             .replace("__OVERVIEW__", over_uri)
             .replace("__PATCHES__", json.dumps(out))
+            .replace("__PATCHES_BOTTOM__", "null")
             .replace("__L0W__", str(l0w)).replace("__L0H__", str(l0h))
             .replace("__MPP_NUM__", repr(mpp if mpp else 0.0))
-            .replace("__MPP_TXT__", mpp_txt).replace("__MAG_TXT__", mag_txt))
+            .replace("__MPP_TXT__", mpp_txt).replace("__MAG_TXT__", mag_txt)
+            .replace("__AXIS_NOTE__", ""))
 
     os.makedirs(os.path.dirname(os.path.abspath(out_html)), exist_ok=True)
     with open(out_html, "w", encoding="utf-8") as f:
@@ -118,6 +120,16 @@ _TEMPLATE = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__STEM__ — patch gallery</title>
+<script>
+  /* set the theme BEFORE first paint so dark mode never flashes light on reload */
+  (function () {
+    try {
+      var m = localStorage.getItem('gallery-theme')
+              || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', m);
+    } catch (e) {}
+  })();
+</script>
 <style>
   :root {
     --bg: #f4f1f4; --panel: #fbfafb; --ink: #241f27; --muted: #6c6172;
@@ -153,9 +165,23 @@ _TEMPLATE = r"""<!DOCTYPE html>
   h1 { font-family: var(--mono); font-size: clamp(20px, 3.2vw, 30px); font-weight: 600;
     margin: 2px 0 0; letter-spacing: -0.01em; width: 100%; }
   .sub { color: var(--muted); font-size: 14px; margin: 4px 0 0; word-break: break-all; }
+  .axis-note { width: 100%; margin: 10px 0 0; font-family: var(--mono); font-size: 12.5px;
+    color: var(--ink); display: inline-flex; align-items: center; gap: 8px; }
+  .axis-note .pill { background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--accent); border-radius: 6px; padding: 2px 8px; font-weight: 600; }
+
+  /* rank-end toggle (top vs bottom of the axis) */
+  .rank-toggle { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+  .rt-label { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); }
+  .rt-seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+  .rt-btn { background: var(--panel); color: var(--muted); border: 0; cursor: pointer;
+    font-family: var(--mono); font-size: 12px; padding: 6px 13px; transition: background .12s, color .12s; }
+  .rt-btn + .rt-btn { border-left: 1px solid var(--line); }
+  .rt-btn[aria-pressed="true"] { background: var(--accent); color: #fff; }
 
   /* three regions: thumb rail · stage · aside */
-  .layout { display: grid; gap: 20px; margin-top: 26px;
+  .layout { display: grid; gap: 20px; margin-top: 16px;
     grid-template-columns: 104px minmax(0,1fr); grid-template-areas: "rail stage" "rail aside"; }
   @media (min-width: 880px) {
     .layout { grid-template-columns: 108px minmax(0,1.5fr) minmax(240px,1fr);
@@ -205,12 +231,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .scalebar .bar { height: 3px; background: var(--stage-ink); border-radius: 2px; }
 
   /* aside */
-  .aside { grid-area: aside; display: flex; flex-direction: column; gap: 16px; }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+  .aside { grid-area: aside; display: flex; flex-direction: column; gap: 12px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 15px; }
   .panel h2 { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
-    color: var(--muted); font-weight: 600; margin: 0 0 12px; }
-  .desc { font-size: 13px; color: var(--ink); margin: -2px 0 14px; }
-  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; }
+    color: var(--muted); font-weight: 600; margin: 0 0 9px; }
+  .desc { font-size: 13px; color: var(--ink); margin: -2px 0 10px; }
+  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; }
   dt { color: var(--muted); font-size: 13px; }
   dd { margin: 0; font-family: var(--mono); font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
 
@@ -221,7 +247,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     box-shadow: 0 0 0 1px rgba(255,255,255,.5); cursor: pointer; }
   .locbox.active { outline: 2.5px solid var(--accent); z-index: 3;
     box-shadow: 0 0 0 1.5px #fff, 0 0 16px 4px color-mix(in srgb, var(--accent) 75%, transparent); }
-  .loc-legend { display: flex; gap: 16px; margin: 10px 2px 0; font-size: 11.5px; color: var(--muted);
+  .loc-legend { display: flex; gap: 16px; margin: 7px 2px 0; font-size: 11.5px; color: var(--muted);
     font-family: var(--mono); flex-wrap: wrap; }
   .loc-legend span { display: inline-flex; align-items: center; gap: 6px; }
   .swatch { width: 11px; height: 11px; border-radius: 3px; outline-offset: -1px; }
@@ -262,7 +288,16 @@ _TEMPLATE = r"""<!DOCTYPE html>
     <span class="eyebrow">Whole-slide image · patch gallery</span>
     <h1>__STEM__</h1>
     <p class="sub">H&amp;E · Aperio SVS · __MAG_TXT__ · <code class="k">__SRCURI__</code></p>
+    __AXIS_NOTE__
   </header>
+
+  <div id="rank-toggle" class="rank-toggle" hidden>
+    <span class="rt-label">Show along axis</span>
+    <div class="rt-seg">
+      <button id="rt-top" class="rt-btn" type="button" aria-pressed="true">▲ Top 24</button>
+      <button id="rt-bottom" class="rt-btn" type="button" aria-pressed="false">▼ Bottom 24</button>
+    </div>
+  </div>
 
   <div class="layout">
     <nav class="rail" aria-label="Patches">
@@ -314,7 +349,8 @@ _TEMPLATE = r"""<!DOCTYPE html>
 </div>
 
 <script>
-  const PATCHES = __PATCHES__;
+  const PATCHES_TOP = __PATCHES__;
+  const PATCHES_BOTTOM = __PATCHES_BOTTOM__;        // array (opposite end of the axis) or null
   const MPP = __MPP_NUM__;
   const PAGE = 6;                                   // at most 6 thumbnails on the rail at once
 
@@ -325,20 +361,24 @@ _TEMPLATE = r"""<!DOCTYPE html>
   const pgPrev   = document.getElementById('pg-prev');
   const pgNext   = document.getElementById('pg-next');
   const pgLabel  = document.getElementById('pg-label');
-  const nPages   = Math.ceil(PATCHES.length / PAGE);
-  let active = 0, page = 0;
+  let PATCHES = PATCHES_TOP;
+  let nPages = Math.ceil(PATCHES.length / PAGE);
+  let active = 0, page = 0, boxEls = [];
 
-  // location boxes: ALL patches on the slide map (not paginated)
-  PATCHES.forEach((p, i) => {
-    const d = document.createElement('div');
-    d.className = 'locbox other';
-    d.style.left = p.box.l + '%'; d.style.top = p.box.t + '%';
-    d.style.width = p.box.w + '%'; d.style.height = p.box.h + '%';
-    d.title = p.title;
-    d.addEventListener('click', () => setActive(i));
-    boxesEl.appendChild(d);
-  });
-  const boxEls = [...boxesEl.children];
+  // location boxes: ALL patches of the current set on the slide map (not paginated)
+  function renderBoxes() {
+    boxesEl.innerHTML = '';
+    PATCHES.forEach((p, i) => {
+      const d = document.createElement('div');
+      d.className = 'locbox other';
+      d.style.left = p.box.l + '%'; d.style.top = p.box.t + '%';
+      d.style.width = p.box.w + '%'; d.style.height = p.box.h + '%';
+      d.title = p.title;
+      d.addEventListener('click', () => setActive(i));
+      boxesEl.appendChild(d);
+    });
+    boxEls = [...boxesEl.children];
+  }
 
   // rail: render only the current page's 6 thumbnails
   function renderThumbs() {
@@ -413,6 +453,24 @@ _TEMPLATE = r"""<!DOCTYPE html>
     applyTheme(next); localStorage.setItem('gallery-theme', next);
   });
 
+  // top / bottom-of-axis toggle (only if a bottom set was supplied)
+  const rankToggle = document.getElementById('rank-toggle'),
+        rtTop = document.getElementById('rt-top'), rtBottom = document.getElementById('rt-bottom');
+  function switchSet(which) {
+    PATCHES = which === 'bottom' ? PATCHES_BOTTOM : PATCHES_TOP;
+    nPages = Math.ceil(PATCHES.length / PAGE);
+    page = 0; active = 0;
+    rtTop.setAttribute('aria-pressed', String(which !== 'bottom'));
+    rtBottom.setAttribute('aria-pressed', String(which === 'bottom'));
+    renderBoxes(); renderThumbs(); setActive(0);
+  }
+  if (PATCHES_BOTTOM) {
+    rankToggle.hidden = false;
+    rtTop.addEventListener('click', () => switchSet('top'));
+    rtBottom.addEventListener('click', () => switchSet('bottom'));
+  }
+
+  renderBoxes();
   renderThumbs();
   setActive(0);
 </script>

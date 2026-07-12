@@ -39,32 +39,44 @@ s3 = boto3.client("s3", region_name=REGION)
 
 
 def build_gallery_lowmem(reader, slide_uri, stem, regions, out_html, win=1536,
-                         quality=86, display_max=1024, overview_max=1400):
+                         quality=86, display_max=1024, overview_max=1400, axis_note="",
+                         regions_bottom=None):
     """Same visualizer UI as wsi_patch_gallery (its _TEMPLATE + _jpeg_uri), but crop each
     region via openslide read_region (KB-scale random access) instead of the whole level-0
-    plane — so it runs on a small box where the full-plane read (here 8 GB) OOMs."""
+    plane — so it runs on a small box where the full-plane read (here 8 GB) OOMs.
+
+    regions_bottom (optional): the opposite end of the ranking axis; when given, the gallery
+    ships a Top/Bottom toggle."""
     l0w, l0h = reader.dimensions
     thumb, _ = reader.thumbnail(overview_max)
     over_uri, _ = gallery._jpeg_uri(thumb, quality=82)
-    out = []
-    for cx, cy, title, desc in regions:
-        ox = max(0, min(int(cx) - win // 2, l0w - win))
-        oy = max(0, min(int(cy) - win // 2, l0h - win))
-        crop = np.asarray(reader.read_region((ox, oy), 0, (win, win)).convert("RGB"))
-        uri, _ = gallery._jpeg_uri(crop, quality=quality, maxside=display_max)
-        out.append({"title": title, "desc": desc, "cx": ox + win // 2, "cy": oy + win // 2,
-                    "ox": ox, "oy": oy, "w": win, "h": win, "img": uri,
-                    "box": {"l": round(100 * ox / l0w, 3), "t": round(100 * oy / l0h, 3),
-                            "w": round(100 * win / l0w, 3), "h": round(100 * win / l0h, 3)}})
+
+    def crop_set(regs):
+        out = []
+        for cx, cy, title, desc in regs:
+            ox = max(0, min(int(cx) - win // 2, l0w - win))
+            oy = max(0, min(int(cy) - win // 2, l0h - win))
+            crop = np.asarray(reader.read_region((ox, oy), 0, (win, win)).convert("RGB"))
+            uri, _ = gallery._jpeg_uri(crop, quality=quality, maxside=display_max)
+            out.append({"title": title, "desc": desc, "cx": ox + win // 2, "cy": oy + win // 2,
+                        "ox": ox, "oy": oy, "w": win, "h": win, "img": uri,
+                        "box": {"l": round(100 * ox / l0w, 3), "t": round(100 * oy / l0h, 3),
+                                "w": round(100 * win / l0w, 3), "h": round(100 * win / l0h, 3)}})
+        return out
+
+    out = crop_set(regions)
+    out_bottom = crop_set(regions_bottom) if regions_bottom else None
     mpp = reader.mpp
     mag = round(10.0 / mpp) if mpp else None
     page = (gallery._TEMPLATE
             .replace("__STEM__", html.escape(stem)).replace("__SRCURI__", html.escape(slide_uri))
             .replace("__OVERVIEW__", over_uri).replace("__PATCHES__", json.dumps(out))
+            .replace("__PATCHES_BOTTOM__", json.dumps(out_bottom) if out_bottom is not None else "null")
             .replace("__L0W__", str(l0w)).replace("__L0H__", str(l0h))
             .replace("__MPP_NUM__", repr(mpp if mpp else 0.0))
             .replace("__MPP_TXT__", f"{mpp:.4f} µm/px" if mpp else "unknown")
-            .replace("__MAG_TXT__", f"≈ {mag}×" if mag else "unknown"))
+            .replace("__MAG_TXT__", f"≈ {mag}×" if mag else "unknown")
+            .replace("__AXIS_NOTE__", axis_note))
     with open(out_html, "w", encoding="utf-8") as f:
         f.write(page)
     return {"n_patches": len(out)}
@@ -113,6 +125,9 @@ def main():
                          "'bcss_breast' = breast-native axes (use for a breast WSI)")
     ap.add_argument("--n-square", type=int, default=256, help="patches in the patchwork (16x16=256)")
     ap.add_argument("--n-regions", type=int, default=24, help="top regions to show in the gallery")
+    ap.add_argument("--min-sep", type=int, default=1536,
+                    help="min level-0 px between selected regions (spatial NMS; default = crop "
+                         "window, so shown crops don't overlap). Set 0 to disable.")
     ap.add_argument("--cell", type=int, default=28, help="px per patch in the patchwork")
     ap.add_argument("--out", default="/tmp/patchwork")
     args = ap.parse_args()
@@ -162,13 +177,39 @@ def main():
     ov.save(dist_path)
     print(f"[patchwork] distribution overlay -> {dist_path}", flush=True)
 
-    # 3) the EXISTING visualizer over the top regions (WSI map + highlight the selected)
-    regions = []
-    for k, idx in enumerate(order[:args.n_regions]):
-        x, y, sz = patch_box(idx)
-        regions.append((x + sz // 2, y + sz // 2, f"#{k + 1}  {args.pos}", f"score {scores[idx]:+.2f}"))
+    # 3) the EXISTING visualizer over the top regions (WSI map + highlight the selected).
+    # Spatial NMS: the ranking scores patch TOKENS (~28px apart) but each is shown as a
+    # `win`-px crop, so neighbouring high/low tokens in one homogeneous blob would render as
+    # ~98%-overlapping duplicates. Greedily accept a region only if its center is >= min_sep
+    # from every already-accepted one -> n spatially DISTINCT regions, not n top scores.
+    def select_spread(ranked, n, min_sep):
+        picked, centers, s2 = [], [], min_sep * min_sep
+        for idx in ranked:
+            x, y, sz = patch_box(idx)
+            cx, cy = x + sz / 2, y + sz / 2
+            if all((cx - px) ** 2 + (cy - py) ** 2 >= s2 for px, py in centers):
+                picked.append(idx); centers.append((cx, cy))
+                if len(picked) >= n:
+                    break
+        return picked
+
+    def to_regions(idxs):
+        out = []
+        for k, idx in enumerate(idxs):
+            x, y, sz = patch_box(idx)
+            out.append((x + sz // 2, y + sz // 2, f"#{k + 1}", f"score {scores[idx]:+.2f}"))
+        return out
+
+    regions = to_regions(select_spread(order, args.n_regions, args.min_sep))
+    # opposite end of the axis: the lowest-scoring patches (most un-<pos>), rank 1 = lowest
+    regions_bottom = to_regions(select_spread(order[::-1], args.n_regions, args.min_sep))
     html_path = os.path.join(args.out, f"{stem}_gallery.html")
-    meta = build_gallery_lowmem(reader, args.wsi, stem, regions, html_path)
+    ref_label = {"bcss_breast": "breast (BCSS)", None: "colon (NCT-CRC)"}.get(
+        args.axis_dataset, args.axis_dataset)
+    axis_note = (f'<p class="axis-note">Patches ranked by the '
+                 f'<span class="pill">{args.pos}</span> concept axis · fit from {ref_label}</p>')
+    meta = build_gallery_lowmem(reader, args.wsi, stem, regions, html_path,
+                                axis_note=axis_note, regions_bottom=regions_bottom)
     print(f"[patchwork] regional gallery ({meta['n_patches']} regions, existing visualizer UI) "
           f"-> {html_path}", flush=True)
 
