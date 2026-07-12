@@ -32,23 +32,19 @@ python deploy/sagemaker/launch.py --wait
 Outputs (`hoptimus_edited.pt`, `sample_cls.pt`, `run.json`) land in the job's S3
 output path; track with `aws sagemaker describe-training-job --training-job-name <name>`.
 
-## ⚠️ Blockers on this workshop account (verified 2026-07-11)
+## Status (2026-07-11)
 
-1. **No passable execution role.** The only SageMaker-trusting role is the
-   service-linked `AWSServiceRoleForAmazonSageMakerNotebooks`, which **cannot** be a
-   training-job `RoleArn`. You need a role that trusts `sagemaker.amazonaws.com` with
-   `AmazonSageMakerFullAccess` + S3 access. **Ask the organizers for its ARN.** If your
-   role has `iam:CreateRole`+`PassRole`, create one:
-   ```bash
-   aws iam create-role --role-name owkin-sm-exec \
-     --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"sagemaker.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
-   aws iam attach-role-policy --role-name owkin-sm-exec --policy-arn arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
-   aws iam attach-role-policy --role-name owkin-sm-exec --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
-   ```
-   (Participant roles often can't do this — expect to need the organizers.)
+1. **Execution role — CREATED.** `owkin-sm-exec`
+   (`arn:aws:iam::735570134926:role/owkin-sm-exec`), trusts `sagemaker.amazonaws.com`,
+   has `AmazonSageMakerFullAccess` + `AmazonS3FullAccess`. The workspace env
+   (`.owkin_hack_aws.sh`) exports `SAGEMAKER_ROLE_ARN`, so `launch.py` finds it with no flags.
 
-2. **GPU quota.** `ml.g5.2xlarge for training job usage` = 1 ✅ (so one job at a time is
-   fine). EC2 G quota is 0 but that's irrelevant here — SageMaker training uses its own
-   pool.
+2. **GPU quota — OK.** `ml.g5.2xlarge for training job usage` = 1 (one job at a time).
+   The EC2 G quota being 0 is irrelevant — SageMaker training uses its own pool.
 
-Once the role ARN exists, everything above runs unchanged.
+3. **Last unconfirmed step: `iam:PassRole` + `sagemaker:CreateTrainingJob`.** The
+   participant role carries an explicit-deny guardrail policy (`iam_policy-0`) that blocks
+   `iam:SimulatePrincipalPolicy`, so we can't pre-check these. The only way to confirm is
+   to launch — `create-training-job` checks PassRole at submit time. If it returns
+   `AccessDenied`, the guardrail blocks job submission and the organizers must run it; if
+   it returns a job name (or a capacity/quota error), permissions are fine.
