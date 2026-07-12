@@ -1214,6 +1214,14 @@
       if (s.prompt) $c("c-prompt").value = s.prompt;
     }).catch(() => { $c("slide-meta").textContent = "tile unavailable"; });
 
+    // keep the "…frozen <encoder> reads this" label in sync with the chosen track
+    function syncReader() {
+      const enc = ($c("c-track") && $c("c-track").value === "h0") ? "H-optimus-0" : "phikon-v2";
+      const el = $c("slide-reader");
+      if (el) el.textContent = `one 224px NCT-CRC-HE tile — frozen ${enc} reads this`;
+    }
+    if ($c("c-track")) { $c("c-track").addEventListener("change", syncReader); syncReader(); }
+
     // Submit slide + prompt -> K-Pro (Claude) infers the answer
     $c("c-submit").addEventListener("click", async () => {
       const b = $c("c-submit"); b.disabled = true; setStatus("K-Pro inferring from the slide…");

@@ -213,9 +213,53 @@
   el.start.addEventListener("click", start);
   el.stop.addEventListener("click", function () { cliFlush(); stop("stopped", "done"); });
 
+  // A per-STAGE step frame streamed mid-iteration: light that stage and type its reasoning
+  // line, so the pipeline lights up probe→certify→locate→ablate→reflect and the CLI keeps
+  // generating text AS the loop works (not only when the whole iteration finally lands).
+  var lastStepIter = 0;
+  function padStage(s) { return (s + "       ").slice(0, 7); }
+  function stepVal(r) {
+    var d = r.data || {};
+    switch (r.stage) {
+      case "probe":   return d.pos ? d.pos + " vs " + d.neg : "…";
+      case "certify": return (d.verdict || "—") + " · " + fmt(d.score, 3);
+      case "locate":  return (d.layer != null ? "layer " + d.layer : "—") + (d.mode ? " · " + d.mode : "");
+      case "ablate":  return d.bites ? "bites @ " + d.layer : "redundant";
+      case "reflect": return d.next_probe ? "→ " + d.next_probe.pos + " vs " + d.next_probe.neg : "…";
+    }
+    return "…";
+  }
+  function handleStep(r) {
+    stopScan();                                  // real steps drive the pipeline now
+    var idx = STAGES.indexOf(r.stage);
+    if (idx >= 0) {
+      STAGES.forEach(function (k, i) {
+        var s = stageEl[k]; if (!s.node) return;
+        s.node.classList.remove("hot");
+        if (i < idx) s.node.classList.add("done");
+        else if (i === idx) s.node.classList.add("hot");
+        else s.node.classList.remove("done");   // stages not yet reached this iteration
+      });
+      var s = stageEl[r.stage];
+      if (s && s.val) s.val.textContent = stepVal(r);
+    }
+    setStatus("iter " + r.iter + " / " + r.max_iters + " · " + r.stage, "running");
+    var lines = [];
+    if (r.iter !== lastStepIter && r.stage === "probe" && (r.data && r.data.pos || lastStepIter)) {
+      lastStepIter = r.iter;
+      lines.push({ h: '<span class="rr-cli-k">── iter ' + r.iter + " / " + r.max_iters +
+        " ─────────────────────</span>", c: "hr" });
+    }
+    lines.push({ h: '<span class="rr-cli-stage">' + padStage(r.stage) + "</span> " +
+      '<span class="rr-cli-v">' + escapeHtml(r.text) + "</span>",
+      c: r.stage === "reflect" ? "reflect" : "" });
+    cliEnqueue(lines);
+  }
+
   function start() {
     stop(null);                                  // clear any prior run
     cliFlush();                                  // drop any half-printed reasoning
+    lastStepIter = 0;
     el.feed.innerHTML = "";
     agg = {};
     el.summary.hidden = true; el.aggBox.innerHTML = "";
@@ -244,6 +288,7 @@
       var rec;
       try { rec = JSON.parse(ev.data); } catch (e) { return; }
       if (rec.done) { finishDone(rec); return; }
+      if (rec.type === "step") { handleStep(rec); return; }   // per-stage reasoning as it streams
       renderIter(rec);
       if (rec.circuit_mode && el.mode) el.mode.textContent = "· " + rec.circuit_mode;
       setStatus("iteration " + rec.iter + " / " + rec.max_iters, "running");
@@ -330,7 +375,8 @@
     el.feed.scrollTop = el.feed.scrollHeight;
     updateAgg(r.circuit || [], r.circuit_mode);
     pipeUpdate(r);
-    cliEmit(r);
+    // reasoning already streamed live per-stage via handleStep(); the iter frame just
+    // finalizes the feed card, pipeline values, aggregate circuit, and the tile overlay.
     renderResearchTile(c.pos, c.neg, r);   // overlay where THIS probe fires on the input tile
   }
 
