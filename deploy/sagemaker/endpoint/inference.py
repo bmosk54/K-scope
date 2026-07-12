@@ -138,8 +138,13 @@ def _tile_slide(req, ctx):
 # ---------------------------------------------------------------------------
 # Embed + optional vector push
 # ---------------------------------------------------------------------------
+BATCH = 32   # NB: predict_fn must take exactly (data, model) — a 3rd param is filled with
+             # the MMS context by the inference toolkit, so batch is a module constant.
+
+
 @torch.inference_mode()
-def predict_fn(req, ctx, batch=32):
+def predict_fn(req, ctx):
+    batch = BATCH
     tiles = _tiles_from_request(req, ctx)
     if not tiles:
         return {"dim": ctx["model"].embed_dim, "n": 0, "embeddings": [], "keys": [], "pushed": None}

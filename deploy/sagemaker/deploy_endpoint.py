@@ -90,6 +90,14 @@ def main():
                 "MODEL_CACHE_KEY": "models/hf-cache-h-optimus-0.tar",
                 "VECTOR_BUCKET_ARN": VECTOR_BUCKET_ARN,
                 "TS_DEFAULT_RESPONSE_TIMEOUT": "600",       # allow slow cold model_fn
+                # HF cache/offline MUST be container env (read at import by huggingface_hub,
+                # which the serving toolkit imports before model_fn runs). model_fn restores
+                # the S3 cache into HF_HOME; these point HF at it and forbid the gated HF hit.
+                "HF_HOME": "/opt/ml/hf-cache",
+                "HF_HUB_CACHE": "/opt/ml/hf-cache/hub",
+                "HUGGINGFACE_HUB_CACHE": "/opt/ml/hf-cache/hub",
+                "HF_HUB_OFFLINE": "1",
+                "TRANSFORMERS_OFFLINE": "1",
             },
         },
         ExecutionRoleArn=args.role,
