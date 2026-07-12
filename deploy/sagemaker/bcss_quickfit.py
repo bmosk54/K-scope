@@ -38,6 +38,7 @@ from biolayer.vectors.transfer_check import (               # noqa: E402
 
 B = "bucketbiolayer"
 REGION = "us-west-2"
+OUT_KEY = "embeddings/bcss_breast/h_optimus_0/train.npz"   # the derived reference this job produces
 CLASSES = {1: "TUM", 2: "STR", 3: "LYM"}                   # BCSS gt code -> our concept name
 NATIVE_MPP, TARGET_MPP, TILE = 0.25, 0.5, 224
 CROP = int(round(TILE * TARGET_MPP / NATIVE_MPP))          # 448 native px -> 224 @ 0.5 µm/px
@@ -45,6 +46,15 @@ PER_CLASS, PURITY = 240, 0.9
 MAX_ROIS, PER_ROI_PER_CLASS = 60, 25
 
 s3 = boto3.client("s3", region_name=REGION)
+
+
+def _s3_exists(key):
+    """True if the object is already in the bucket (used as a build cache check)."""
+    try:
+        s3.head_object(Bucket=B, Key=key)
+        return True
+    except s3.exceptions.ClientError:
+        return False
 
 
 def _ls(prefix):
@@ -132,6 +142,15 @@ def embed_tiles(tiles):
 
 
 def main():
+    force = "--force" in sys.argv[1:]
+    # Cache check: this reference is single-source and deterministic, so if it already
+    # exists in S3 another run (or agent) already produced it — skip the ~5-min endpoint
+    # embed instead of duplicating it. Pass --force to rebuild.
+    if _s3_exists(OUT_KEY) and not force:
+        print(f"CACHE HIT: s3://{B}/{OUT_KEY} already exists — skipping fit "
+              f"(pass --force to rebuild).", flush=True)
+        return
+
     tiles = sample_tiles()
     counts = {CLASSES[c]: len(tiles[c]) for c in CLASSES}
     print("sampled:", counts, flush=True)
@@ -144,8 +163,8 @@ def main():
     buf = io.BytesIO()
     np.savez_compressed(buf, feats=feats, labels=labels, class_names=np.array(cn))
     buf.seek(0)
-    s3.upload_fileobj(buf, B, "embeddings/bcss_breast/h_optimus_0/train.npz")
-    print("saved BCSS reference -> s3://%s/embeddings/bcss_breast/h_optimus_0/train.npz" % B, flush=True)
+    s3.upload_fileobj(buf, B, OUT_KEY)
+    print("saved BCSS reference -> s3://%s/%s" % (B, OUT_KEY), flush=True)
 
     # breast (BCSS) directions
     ax_b = fit_certified_axis(feats, labels, cn, "TUM", "LYM")

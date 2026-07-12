@@ -65,7 +65,7 @@ def build_gallery_lowmem(reader, slide_uri, stem, regions, out_html, win=1536,
             .replace("__MPP_NUM__", repr(mpp if mpp else 0.0))
             .replace("__MPP_TXT__", f"{mpp:.4f} µm/px" if mpp else "unknown")
             .replace("__MAG_TXT__", f"≈ {mag}×" if mag else "unknown"))
-    with open(out_html, "w") as f:
+    with open(out_html, "w", encoding="utf-8") as f:
         f.write(page)
     return {"n_patches": len(out)}
 
@@ -77,13 +77,18 @@ def _dl(key, local):
     return local
 
 
-def rank_patches(stem, pos, tmp, chunk=20_000):
+def rank_patches(stem, pos, tmp, chunk=20_000, dataset_slug=None):
     """Score every 14x14 patch of one slide by the pos-vs-rest axis; return sorted meta.
-    float32 + small chunks so a multi-hundred-k-row patch shard doesn't blow local RAM."""
+    float32 + small chunks so a multi-hundred-k-row patch shard doesn't blow local RAM.
+
+    dataset_slug picks which reference the concept axis is fit from: None = default colon
+    (NCT-CRC) axes; "bcss_breast" = breast-native TUM/STR/LYM axes. Use the breast axes on a
+    breast WSI so the ranking is not a cross-tissue transfer."""
     V = np.load(_dl(f"embeddings/wsi/{stem}/patch_vectors.npy", os.path.join(tmp, f"{stem}_pv.npy")),
                 mmap_mode="r")
     M = np.load(_dl(f"embeddings/wsi/{stem}/patch_meta.npz", os.path.join(tmp, f"{stem}_pm.npz")))
-    feats, labels, cn, _ = loader.load("h_optimus_0", "train")
+    feats, labels, cn, src = loader.load("h_optimus_0", "train", dataset_slug=dataset_slug)
+    print(f"[patchwork] '{pos}-vs-rest' axis fit from {src}", flush=True)
     labels, cn = np.asarray(labels), list(cn)
     fit = P.fit_probe(np.asarray(feats), (labels == cn.index(pos)).astype(int))
     d = fit["direction"].astype("float32")
@@ -103,6 +108,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--wsi", default="s3://bucketbiolayer/wsi/BRACS/BRACS_1003675.svs")
     ap.add_argument("--pos", default="TUM", help="axis positive class (one-vs-rest) used to rank")
+    ap.add_argument("--axis-dataset", default=None,
+                    help="reference the concept axis is fit from: default = colon (NCT-CRC); "
+                         "'bcss_breast' = breast-native axes (use for a breast WSI)")
     ap.add_argument("--n-square", type=int, default=256, help="patches in the patchwork (16x16=256)")
     ap.add_argument("--n-regions", type=int, default=24, help="top regions to show in the gallery")
     ap.add_argument("--cell", type=int, default=28, help="px per patch in the patchwork")
@@ -113,7 +121,7 @@ def main():
 
     stem = os.path.splitext(os.path.basename(args.wsi))[0]
     local = _dl(args.wsi[5:].split("/", 1)[1], os.path.join(tmp, os.path.basename(args.wsi)))
-    order, scores, M = rank_patches(stem, args.pos, tmp)
+    order, scores, M = rank_patches(stem, args.pos, tmp, dataset_slug=args.axis_dataset)
 
     reader = open_wsi(local)
     mpp = reader.mpp or 0.25

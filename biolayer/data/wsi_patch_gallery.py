@@ -104,7 +104,7 @@ def build_gallery(slide: str, patches, out_html: str, scratch: str,
             .replace("__MPP_TXT__", mpp_txt).replace("__MAG_TXT__", mag_txt))
 
     os.makedirs(os.path.dirname(os.path.abspath(out_html)), exist_ok=True)
-    with open(out_html, "w") as f:
+    with open(out_html, "w", encoding="utf-8") as f:
         f.write(page)
     return {"output_html": out_html, "n_patches": len(out),
             "level0_dimensions": [l0w, l0h], "mpp_um_per_px": mpp, "magnification": mag,
@@ -112,7 +112,12 @@ def build_gallery(slide: str, patches, out_html: str, scratch: str,
 
 
 # Self-contained, CSP-safe (no external fonts/scripts). __TOKENS__ are filled in above.
-_TEMPLATE = r"""<title>__STEM__ — patch gallery</title>
+_TEMPLATE = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__STEM__ — patch gallery</title>
 <style>
   :root {
     --bg: #f4f1f4; --panel: #fbfafb; --ink: #241f27; --muted: #6c6172;
@@ -141,7 +146,7 @@ _TEMPLATE = r"""<title>__STEM__ — patch gallery</title>
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink);
     font-family: var(--sans); line-height: 1.5; -webkit-font-smoothing: antialiased; }
-  .wrap { max-width: 1180px; margin: 0 auto; padding: clamp(18px, 3.5vw, 44px); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: clamp(18px, 3.5vw, 44px); position: relative; }
   header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
   .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .12em;
     text-transform: uppercase; color: var(--accent); font-weight: 600; }
@@ -161,7 +166,7 @@ _TEMPLATE = r"""<title>__STEM__ — patch gallery</title>
   }
 
   /* thumbnail rail */
-  .rail { grid-area: rail; display: flex; flex-direction: column; gap: 10px; }
+  .rail { grid-area: rail; display: flex; flex-direction: column; gap: 7px; }
   @media (max-width: 879px) { .rail { flex-direction: row; overflow-x: auto; padding-bottom: 4px; } }
   .rail-h { font-family: var(--mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
     color: var(--muted); margin: 2px 0 2px 2px; }
@@ -170,8 +175,9 @@ _TEMPLATE = r"""<title>__STEM__ — patch gallery</title>
     border-radius: 10px; overflow: hidden; flex: 0 0 auto; width: 100%;
     outline: 2px solid transparent; outline-offset: 2px; transition: outline-color .12s, transform .12s; }
   @media (max-width: 879px) { .thumb { width: 92px; } }
-  .thumb img { display: block; width: 100%; aspect-ratio: 1/1; object-fit: cover;
+  .thumb img { display: block; width: 100%; height: clamp(46px, 9.5vh, 88px); object-fit: cover;
     border-radius: 9px; filter: saturate(.96); }
+  @media (max-width: 879px) { .thumb img { height: 92px; } }
   .thumb .tcap { position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 6px 4px;
     font-size: 10px; line-height: 1.15; color: #fff; text-align: left; font-weight: 500;
     background: linear-gradient(transparent, rgba(15,10,16,.82)); }
@@ -227,9 +233,31 @@ _TEMPLATE = r"""<title>__STEM__ — patch gallery</title>
     display: flex; flex-wrap: wrap; gap: 6px 14px; justify-content: space-between; }
   code.k { color: var(--accent); }
   .hint { font-size: 11.5px; color: var(--muted); margin: 2px 2px 0; }
+
+  /* dark-mode toggle */
+  .theme-toggle { position: absolute; top: clamp(18px,3.5vw,44px); right: clamp(18px,3.5vw,44px);
+    background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 9px;
+    font-family: var(--mono); font-size: 12px; padding: 6px 11px; cursor: pointer; z-index: 5;
+    display: inline-flex; align-items: center; gap: 7px; transition: border-color .12s; }
+  .theme-toggle:hover { border-color: var(--accent); }
+
+  /* rail pager (max 6 thumbs per page) */
+  .pager { display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    margin-top: 4px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .pager button { background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 7px; width: 26px; height: 24px; cursor: pointer; font-size: 13px; line-height: 1;
+    transition: border-color .12s, opacity .12s; }
+  .pager button:hover:not(:disabled) { border-color: var(--accent); }
+  .pager button:disabled { opacity: .35; cursor: default; }
+  .pager .pg-label { flex: 1; text-align: center; }
+  @media (max-width: 879px) { .pager { grid-area: rail; } }
 </style>
+</head>
+<body>
 
 <div class="wrap">
+  <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle dark mode">
+    <span id="theme-icon">◐</span><span id="theme-label">Dark</span></button>
   <header>
     <span class="eyebrow">Whole-slide image · patch gallery</span>
     <h1>__STEM__</h1>
@@ -240,6 +268,11 @@ _TEMPLATE = r"""<title>__STEM__ — patch gallery</title>
     <nav class="rail" aria-label="Patches">
       <div class="rail-h">Patches</div>
       <div id="thumbs" style="display:contents"></div>
+      <div id="pager" class="pager" hidden>
+        <button id="pg-prev" type="button" aria-label="previous 6">&#8249;</button>
+        <span class="pg-label" id="pg-label">—</span>
+        <button id="pg-next" type="button" aria-label="next 6">&#8250;</button>
+      </div>
     </nav>
 
     <section class="stage">
@@ -278,31 +311,24 @@ _TEMPLATE = r"""<title>__STEM__ — patch gallery</title>
       </div>
     </aside>
   </div>
-
-  <footer>
-    <span>tifffile + Pillow · no OpenSlide required</span>
-    <span>biolayer.data.wsi_patch_gallery</span>
-  </footer>
 </div>
 
 <script>
   const PATCHES = __PATCHES__;
   const MPP = __MPP_NUM__;
+  const PAGE = 6;                                   // at most 6 thumbnails on the rail at once
 
   const thumbsEl = document.getElementById('thumbs');
   const boxesEl  = document.getElementById('boxes');
   const stageImg = document.getElementById('stage-img');
-  let active = 0;
+  const pagerEl  = document.getElementById('pager');
+  const pgPrev   = document.getElementById('pg-prev');
+  const pgNext   = document.getElementById('pg-next');
+  const pgLabel  = document.getElementById('pg-label');
+  const nPages   = Math.ceil(PATCHES.length / PAGE);
+  let active = 0, page = 0;
 
-  PATCHES.forEach((p, i) => {
-    const b = document.createElement('button');
-    b.className = 'thumb'; b.type = 'button';
-    b.setAttribute('aria-current', i === 0 ? 'true' : 'false');
-    b.innerHTML = `<img src="${p.img}" alt="${p.title}"><span class="tcap">${p.title}</span>`;
-    b.addEventListener('click', () => setActive(i));
-    thumbsEl.appendChild(b);
-  });
-
+  // location boxes: ALL patches on the slide map (not paginated)
   PATCHES.forEach((p, i) => {
     const d = document.createElement('div');
     d.className = 'locbox other';
@@ -312,14 +338,33 @@ _TEMPLATE = r"""<title>__STEM__ — patch gallery</title>
     d.addEventListener('click', () => setActive(i));
     boxesEl.appendChild(d);
   });
-
-  const thumbEls = [...thumbsEl.children];
   const boxEls = [...boxesEl.children];
+
+  // rail: render only the current page's 6 thumbnails
+  function renderThumbs() {
+    thumbsEl.innerHTML = '';
+    const start = page * PAGE, end = Math.min(start + PAGE, PATCHES.length);
+    for (let i = start; i < end; i++) {
+      const p = PATCHES[i];
+      const b = document.createElement('button');
+      b.className = 'thumb'; b.type = 'button'; b.dataset.idx = i;
+      b.setAttribute('aria-current', i === active ? 'true' : 'false');
+      b.innerHTML = `<img src="${p.img}" alt="${p.title}"><span class="tcap">${p.title}</span>`;
+      b.addEventListener('click', () => setActive(i));
+      thumbsEl.appendChild(b);
+    }
+    if (nPages > 1) {
+      pagerEl.hidden = false;
+      pgLabel.textContent = `${start + 1}–${end} of ${PATCHES.length}`;
+    }
+  }
 
   function setActive(i) {
     active = (i + PATCHES.length) % PATCHES.length;
     const p = PATCHES[active];
-    thumbEls.forEach((t, k) => t.setAttribute('aria-current', k === active ? 'true' : 'false'));
+    const wantPage = Math.floor(active / PAGE);
+    if (wantPage !== page) { page = wantPage; renderThumbs(); }
+    else { [...thumbsEl.children].forEach(t => t.setAttribute('aria-current', +t.dataset.idx === active ? 'true' : 'false')); }
     boxEls.forEach((bx, k) => bx.className = 'locbox ' + (k === active ? 'active' : 'other'));
     stageImg.src = p.img;
     stageImg.alt = `${p.title} — level-0 tile at (${p.ox}, ${p.oy})`;
@@ -340,8 +385,12 @@ _TEMPLATE = r"""<title>__STEM__ — patch gallery</title>
     } else {
       document.getElementById('st-scale').textContent = '';
     }
-    thumbEls[active].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const at = thumbsEl.querySelector(`[data-idx="${active}"]`);
+    if (at) at.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
+
+  pgPrev.addEventListener('click', () => { page = (page - 1 + nPages) % nPages; renderThumbs(); });
+  pgNext.addEventListener('click', () => { page = (page + 1) % nPages; renderThumbs(); });
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowRight') { setActive(active + 1); e.preventDefault(); }
@@ -349,8 +398,26 @@ _TEMPLATE = r"""<title>__STEM__ — patch gallery</title>
     else if (e.key >= '1' && e.key <= String(Math.min(9, PATCHES.length))) setActive(+e.key - 1);
   });
 
+  // dark-mode toggle (CSS already ships [data-theme] palettes; persist the choice)
+  const tRoot = document.documentElement, tBtn = document.getElementById('theme-toggle'),
+        tIcon = document.getElementById('theme-icon'), tLabel = document.getElementById('theme-label');
+  function applyTheme(mode) {
+    tRoot.setAttribute('data-theme', mode);
+    tIcon.textContent = mode === 'dark' ? '☀' : '◐';
+    tLabel.textContent = mode === 'dark' ? 'Light' : 'Dark';
+  }
+  const savedTheme = localStorage.getItem('gallery-theme');
+  applyTheme(savedTheme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+  tBtn.addEventListener('click', () => {
+    const next = tRoot.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    applyTheme(next); localStorage.setItem('gallery-theme', next);
+  });
+
+  renderThumbs();
   setActive(0);
 </script>
+</body>
+</html>
 """
 
 
