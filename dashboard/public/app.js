@@ -152,12 +152,15 @@
     return { centers, blobs, nuclei, stromaCells, lymphs };
   })();
 
-  // NOTE: the Case tissue render is an unmeasured SCHEMATIC. There is no real per-patch
-  // signal to draw — models.py mean-pools patch tokens into the CLS, so the cached
-  // embeddings are per-tile, not per-patch (biolayer/causal/intervene.py::axis_field is
-  // explicit: "not per-patch spatial"), and the live 14x14 attribution wrapper
-  // (attribution.py::hack_tile) is NotImplementedError. So the Case view shows only what
-  // certify actually measured: axis, causal pillars, contrast gate, and the reasoning trace.
+  // NOTE: the Case tissue render is a MEASURED per-patch causal heatmap, precomputed by
+  // dashboard/precompute_heatmaps.py. For a real NCT-CRC tile we re-forward it through
+  // frozen Phikon-v2, capture the 14x14 patch-token grid at the readout layer (the grid
+  // models.py normally mean-pools away), project each patch onto the concept axis, and
+  // z-score that projection against a matched-random-direction null (Section-5-D control).
+  // window.HEATMAPS[concept] = { tile, z_grid 14x14, norm_grid, top_z, verdict, ... }.
+  // Concepts with no substrate (declined claims) get an honest "no map" panel — never a
+  // fabricated schematic.
+  let overlayOn = true;
 
   function renderReadoutStatic(claim) {
     const el = document.getElementById("readout-static");
@@ -210,74 +213,114 @@
     const claim = currentClaim();
     const container = document.getElementById("tile-stage");
     container.innerHTML = "";
-    const W = 640, H = 460;
-    const svg = d3.select(container).append("svg").attr("viewBox", `0 0 ${W} ${H}`);
-
-    svg.append("rect").attr("width", W).attr("height", H).attr("fill", "#1b1730");
-
-    const line = d3.line().curve(d3.curveCatmullRomClosed.alpha(0.85));
-    TISSUE_LAYOUT.blobs.forEach((b) => {
-      svg
-        .append("path")
-        .attr("d", line(b.pts.map((p) => [p[0] * W, p[1] * H])))
-        .attr("fill", "#332a53")
-        .attr("stroke", "#453a6c")
-        .attr("stroke-width", 1.4);
-    });
-
-    svg
-      .selectAll(".stroma-cell")
-      .data(TISSUE_LAYOUT.stromaCells)
-      .join("line")
-      .attr("x1", (d) => d.x * W - Math.cos((d.rot * Math.PI) / 180) * d.len)
-      .attr("y1", (d) => d.y * H - Math.sin((d.rot * Math.PI) / 180) * d.len)
-      .attr("x2", (d) => d.x * W + Math.cos((d.rot * Math.PI) / 180) * d.len)
-      .attr("y2", (d) => d.y * H + Math.sin((d.rot * Math.PI) / 180) * d.len)
-      .attr("stroke", "#5f5390")
-      .attr("stroke-width", 1.1)
-      .attr("stroke-opacity", 0.55);
-
-    svg
-      .selectAll(".nucleus")
-      .data(TISSUE_LAYOUT.nuclei)
-      .join("ellipse")
-      .attr("cx", (d) => d.x * W)
-      .attr("cy", (d) => d.y * H)
-      .attr("rx", (d) => d.rr)
-      .attr("ry", (d) => d.rr * 1.3)
-      .attr("fill", "#8b78e8")
-      .attr("fill-opacity", 0.85);
-
-    svg
-      .selectAll(".lymph")
-      .data(TISSUE_LAYOUT.lymphs)
-      .join("circle")
-      .attr("cx", (d) => d.x * W)
-      .attr("cy", (d) => d.y * H)
-      .attr("r", (d) => d.rr)
-      .attr("fill", "#241f40")
-      .attr("stroke", "#6c8dfb")
-      .attr("stroke-width", 0.6)
-      .attr("fill-opacity", 0.8);
-
-    // schematic-illustration watermark — no per-patch grid is drawn: the substrate is a
-    // pooled CLS with no image location, so there is nothing real to color per patch.
-    svg
-      .append("text")
-      .attr("x", W - 12)
-      .attr("y", 20)
-      .attr("text-anchor", "end")
-      .attr("fill", "#7d82a0")
-      .style("font-size", "11px")
-      .style("font-family", "var(--mono)")
-      .text("schematic · not measured");
-
-    document.getElementById("case-caption").textContent =
-      `${claim.claim} — schematic tissue illustration. The substrate pools patch tokens into one CLS vector, ` +
-      `so there is no per-patch signal to render; the certified evidence is on the right.`;
-
+    const hm = claim && claim.concept && (window.HEATMAPS || {})[claim.concept];
+    if (hm) renderCausalMap(container, claim, hm);
+    else renderNoMap(container, claim);
     renderReadoutStatic(claim);
     renderReasoningTrace(claim);
+  }
+
+  // A real tile + measured per-patch causal heatmap (14x14 patch-projection z vs a
+  // matched-random-direction null). Cold patches are transparent so tissue shows through;
+  // hot patches are the ones whose readout-layer activation carries the concept axis.
+  function renderCausalMap(container, claim, hm) {
+    const S = hm.grid_side || (hm.z_grid || []).length || 14;
+    const CELL = 224 / S;
+    const svg = d3
+      .select(container)
+      .append("svg")
+      .attr("viewBox", "0 0 224 224")
+      .attr("preserveAspectRatio", "xMidYMid meet");
+
+    // the real NCT-CRC tile this map was measured on
+    svg.append("image")
+      .attr("href", apiUrl(hm.tile)).attr("xlink:href", apiUrl(hm.tile))
+      .attr("x", 0).attr("y", 0).attr("width", 224).attr("height", 224);
+
+    const g = svg.append("g").attr("class", "hm-overlay").style("display", overlayOn ? null : "none");
+    const norm = hm.norm_grid || [];
+    const MAX_DARK = 0.74;                 // dimmest patch is veiled, never fully black
+    let topR = 0, topC = 0, topV = -1;
+    for (let r = 0; r < S; r++) {
+      for (let c = 0; c < S; c++) {
+        const v = (norm[r] && norm[r][c]) || 0;
+        if (v > topV) { topV = v; topR = r; topC = c; }
+        // spotlight: a patch keeps the tile's REAL color where it aligns with the concept
+        // axis; the less it aligns, the heavier the dark-grey veil (opacity ∝ 1 − importance).
+        g.append("rect")
+          .attr("x", c * CELL).attr("y", r * CELL)
+          .attr("width", CELL + 0.4).attr("height", CELL + 0.4)
+          .attr("fill", "#0b0a12")
+          .attr("fill-opacity", MAX_DARK * (1 - v));
+      }
+    }
+
+    // ring the single most concept-carrying patch — left fully un-veiled (real color)
+    g.append("rect")
+      .attr("x", topC * CELL).attr("y", topR * CELL)
+      .attr("width", CELL).attr("height", CELL)
+      .attr("fill", "none").attr("stroke", "#ffe08a").attr("stroke-width", 1.4);
+
+    // measured badge (replaces the old "schematic · not measured" watermark)
+    svg.append("rect").attr("x", 6).attr("y", 6).attr("width", 74).attr("height", 16)
+      .attr("rx", 3).attr("fill", "rgba(12,10,24,0.72)");
+    svg.append("text").attr("x", 43).attr("y", 17).attr("text-anchor", "middle")
+      .attr("fill", "#9be7a8").style("font-size", "9px").style("font-family", "var(--mono)")
+      .text("● measured");
+
+    // header row above the tile: axis · layer · top-z · overlay toggle
+    const head = document.createElement("div");
+    head.className = "hm-head";
+    const strong = hm.top_z >= 3;
+    head.innerHTML =
+      `<div class="hm-head-left">` +
+        `<span class="hm-axis">${hm.pos} vs ${hm.neg}</span>` +
+        `<span class="hm-layer">readout layer · ${hm.n_patches || S * S} patches</span>` +
+      `</div>` +
+      `<div class="hm-head-right">` +
+        `<span class="hm-z ${strong ? "hot" : "flat"}">top-patch z ${(+hm.top_z).toFixed(1)} vs null</span>` +
+        `<button class="hm-toggle" id="hm-toggle">${overlayOn ? "hide" : "show"} overlay</button>` +
+      `</div>`;
+    container.prepend(head);
+    const btn = head.querySelector("#hm-toggle");
+    btn.addEventListener("click", () => { overlayOn = !overlayOn; renderHistology(); });
+
+    // z legend under the tile
+    const leg = document.createElement("div");
+    leg.className = "hm-legend";
+    leg.innerHTML =
+      `<span class="hm-leg-lab">shaded = low · clear = high</span>` +
+      `<span class="hm-leg-bar"></span>` +
+      `<span class="hm-leg-lab">z ${hm.z_min} → ${hm.z_max}</span>`;
+    container.appendChild(leg);
+
+    document.getElementById("case-caption").innerHTML =
+      `<b>${claim.claim}</b> — real NCT-CRC ${hm.pos} tile. Each cell is one 16px patch: it keeps the ` +
+      `tile's real color where its readout-layer activation aligns with the <b>${hm.pos} vs ${hm.neg}</b> ` +
+      `concept axis, and is veiled darker the less it does (z-scored against ${hm.n_null} matched-random directions). ` +
+      (strong
+        ? `The concept <b>singles out specific patches above the null</b> (top-z ${(+hm.top_z).toFixed(1)}) — ` +
+          `a measured saliency map, not a schematic.`
+        : `No patch clears the null here — reported honestly.`) +
+      ` <span class="hm-caveat">Projection saliency on the model's representation; the faithful ` +
+      `mask-and-recompute variant is the live source-intervention behind the necessity curve.</span>`;
+  }
+
+  // Honest fallback for a claim whose concept has no per-patch substrate (declined claims,
+  // or any concept without a precomputed heatmap). No fabricated tissue.
+  function renderNoMap(container, claim) {
+    const why = claim && claim.reason
+      ? claim.reason
+      : "no per-patch causal map for this concept on the wired substrate";
+    container.innerHTML =
+      `<div class="hm-nomap">` +
+        `<div class="hm-nomap-mark">⊘</div>` +
+        `<div class="hm-nomap-title">No per-patch causal map</div>` +
+        `<div class="hm-nomap-sub">${claim ? claim.claim : "—"} — ${why}. ` +
+        `The certified evidence (axis, pillars, contrast gate, trace) is on the right.</div>` +
+      `</div>`;
+    const cap = document.getElementById("case-caption");
+    if (cap) cap.textContent = "";
   }
 
   // ---------------------------------------------------------------- proof: quadrant map
@@ -900,6 +943,7 @@
     case: { title: "Case", tag: "one claim, followed pixel to concept axis" },
     proof: { title: "Proof", tag: "necessity × sufficiency × specificity, and where the axis came from" },
     verdict: { title: "Verdict", tag: "certified claim, confound check, honest coverage" },
+    research: { title: "AutoResearch", tag: "autonomous causal-circuit discovery — probe · certify · locate · ablate · reflect" },
   };
 
   function goToView(id) {
@@ -1005,6 +1049,17 @@
       setLiveBadge(false); // static mock retained
       return false;
     }
+  }
+
+  // Measured per-patch causal heatmaps (dashboard/precompute_heatmaps.py). Static JSON so
+  // the demo needs no GPU at runtime; absence just falls back to the honest "no map" panel.
+  async function loadHeatmaps() {
+    try {
+      const r = await fetch(apiUrl("heatmaps/heatmaps.json"), { headers: { Accept: "application/json" } });
+      if (!r.ok) return;
+      window.HEATMAPS = await r.json();
+      if (!document.body.classList.contains("no-card")) renderHistology();
+    } catch (e) { /* no heatmaps -> renderNoMap fallback */ }
   }
 
   // ---------------------------------------------------------------- run button
@@ -1130,10 +1185,12 @@
 
     initNavigation();
     initConsole();
+    loadHeatmaps();
 
     document.getElementById("claim-prev").addEventListener("click", () => selectClaim(selectedIdx - 1));
     document.getElementById("claim-next").addEventListener("click", () => selectClaim(selectedIdx + 1));
-    document.getElementById("btn-run").addEventListener("click", runCertify);
+    const _runBtn = document.getElementById("btn-run");
+    if (_runBtn) _runBtn.addEventListener("click", runCertify);
 
     goToView("prompt");   // land on the Prompt section
 

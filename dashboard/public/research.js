@@ -1,38 +1,139 @@
-/* AutoResearch rail — drives the autonomous causal-circuit discovery loop.
+/* AutoResearch view — drives the autonomous causal-circuit discovery loop.
  *
  * Self-contained: opens an EventSource to /api/autoresearch and renders one card per
  * streamed iteration (probe -> certify -> locate causal layer -> ablate -> reflect).
- * Touches only #research-rail DOM; never reaches into app.js state.
+ * Also drives the pipeline visualization (#rr-pipeline) — the five-stage loop diagram
+ * that flows while running and fills each stage's live value from the latest iteration.
+ * Touches only #view-research DOM; never reaches into app.js state.
  */
 (function () {
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
-  var shell = document.querySelector(".app-shell");
   var es = null;                 // active EventSource
   var agg = {};                  // layer -> {seen, bites, maxGap} across iterations
   var serverErr = false;         // a named server 'error' frame was shown this run
 
   var el = {
-    rail: $("research-rail"), collapse: $("rr-collapse"), nav: $("nav-research"),
     problem: $("rr-problem"), track: $("rr-track"), iters: $("rr-iters"),
     bedrock: $("rr-bedrock"), live: $("rr-live"),
     start: $("rr-start"), stop: $("rr-stop"), status: $("rr-status"),
     feed: $("rr-feed"), summary: $("rr-circuit-summary"),
     aggBox: $("rr-circuit-agg"), mode: $("rr-circuit-mode"),
+    pipeline: $("rr-pipeline"),
+    cliBody: $("rr-cli-body"), cliMeta: $("rr-cli-meta"),
   };
-  if (!el.rail) return;
+  if (!el.feed) return;
 
-  // ---- collapse / nav -----------------------------------------------------
-  el.collapse.addEventListener("click", function () { shell.classList.toggle("rail-collapsed"); });
-  if (el.nav) el.nav.addEventListener("click", function () {
-    shell.classList.remove("rail-collapsed");
-    el.problem.focus();
+  // ---- reasoning-trace CLI ------------------------------------------------
+  function cliClear(problem) {
+    if (!el.cliBody) return;
+    el.cliBody.innerHTML =
+      '<div class="rr-cli-line dim"><span class="rr-cli-prompt">$</span> autoresearch --loop' +
+      (problem ? ' --problem "' + escapeHtml(shorten(problem, 60)) + '"' : "") + '</div>';
+    cliCursor();
+  }
+  function cliCursor() {
+    if (!el.cliBody) return;
+    var cur = el.cliBody.querySelector(".rr-cli-cursorline");
+    if (cur) { el.cliBody.appendChild(cur); return; }
+    cur = document.createElement("div");
+    cur.className = "rr-cli-line rr-cli-cursorline";
+    cur.innerHTML = '<span class="rr-cli-cursor">▋</span>';
+    el.cliBody.appendChild(cur);
+  }
+  function cliLine(html, cls) {
+    if (!el.cliBody) return;
+    var d = document.createElement("div");
+    d.className = "rr-cli-line" + (cls ? " " + cls : "");
+    d.innerHTML = html;
+    var cur = el.cliBody.querySelector(".rr-cli-cursorline");
+    if (cur) el.cliBody.insertBefore(d, cur); else el.cliBody.appendChild(d);
+    el.cliBody.scrollTop = el.cliBody.scrollHeight;
+  }
+  function cliMeta(text, cls) {
+    if (!el.cliMeta) return;
+    el.cliMeta.className = "rr-cli-meta" + (cls ? " " + cls : "");
+    el.cliMeta.textContent = text;
+  }
+  // Emit one iteration's reasoning as a block of terminal lines: probe → certify →
+  // locate → ablate → reflect, mirroring the pipeline stages.
+  function cliEmit(r) {
+    var c = r.contrast || {}, ab = r.ablation || {}, pil = r.pillars || {};
+    cliLine('<span class="rr-cli-k">── iter ' + r.iter + " / " + r.max_iters + " ─────────────────────</span>", "hr");
+    var by = r.proposed_by ? '  <span class="rr-cli-k">by</span> <span class="rr-cli-v">' + escapeHtml(r.proposed_by) + "</span>" : "";
+    cliLine('<span class="rr-cli-stage">probe  </span> <span class="rr-cli-k">concept=</span><span class="rr-cli-v">' +
+      escapeHtml(r.concept || (c.pos + " vs " + c.neg)) + "</span>" + by);
+    if (r.hypothesis) cliLine('           <span class="rr-cli-k">hyp:</span> ' + escapeHtml(r.hypothesis), "dim");
+    var pills = ["necessity", "sufficiency", "specificity"].map(function (k) {
+      var p = pil[k] || {};
+      return '<span class="rr-cli-' + (p.passed ? "ok" : "no") + '">' + k.slice(0, 4) + (p.passed ? "✓" : "✕") + "</span>";
+    }).join(" ");
+    cliLine('<span class="rr-cli-stage">certify</span> <span class="rr-cli-' + escapeHtml(r.verdict) + '">' +
+      escapeHtml(r.verdict) + '</span> <span class="rr-cli-k">score=</span><span class="rr-cli-v">' +
+      fmt(r.score, 3) + "</span>   " + pills);
+    cliLine('<span class="rr-cli-stage">locate </span> <span class="rr-cli-k">load layer=</span><span class="rr-cli-v">' +
+      (ab.layer != null ? ab.layer : "—") + "</span>" +
+      (r.circuit_mode ? ' <span class="rr-cli-k">mode=</span><span class="rr-cli-v">' + escapeHtml(r.circuit_mode) + "</span>" : ""));
+    cliLine('<span class="rr-cli-stage">ablate </span> <span class="rr-cli-v">' + escapeHtml(ab.note || "—") + "</span>");
+    if (r.diagnosis) cliLine('<span class="rr-cli-stage">reflect</span> ↳ ' + escapeHtml(r.diagnosis), "reflect");
+    if (r.next_probe)
+      cliLine('           <span class="rr-cli-next">→ next probe:</span> <span class="rr-cli-v">' +
+        escapeHtml(r.next_probe.pos + " vs " + r.next_probe.neg) + "</span>", "reflect");
+    else if (r.next_hypothesis)
+      cliLine('           <span class="rr-cli-next">→</span> ' + escapeHtml(r.next_hypothesis), "reflect");
+    cliCursor();
+  }
+
+  // ---- pipeline visualization --------------------------------------------
+  var STAGES = ["probe", "certify", "locate", "ablate", "reflect"];
+  var stageEl = {};   // stage key -> {node: .rr-stage, val: .rr-stage-val}
+  STAGES.forEach(function (k) {
+    var val = $("rr-stage-" + k);
+    stageEl[k] = { node: val ? val.closest(".rr-stage") : null, val: val };
   });
+  function pipeReset() {
+    if (el.pipeline) el.pipeline.classList.remove("running");
+    STAGES.forEach(function (k) {
+      var s = stageEl[k]; if (!s.node) return;
+      s.node.classList.remove("hot", "done");
+      s.val.textContent = "—";
+    });
+  }
+  function pipeRunning(on) {
+    if (el.pipeline) el.pipeline.classList.toggle("running", !!on);
+  }
+  // Fill each stage's live value from the newest iteration, then sweep the "hot"
+  // highlight left-to-right so the eye follows one datum through the loop.
+  function pipeUpdate(r) {
+    var c = r.contrast || {}, ab = r.ablation || {};
+    var vals = {
+      probe: r.concept || (c.pos && c.neg ? c.pos + " vs " + c.neg : "—"),
+      certify: (r.verdict || "—") + " · " + fmt(r.score, 3),
+      locate: (ab.layer != null ? "layer " + ab.layer : "—") +
+              (r.circuit_mode ? " · " + r.circuit_mode : ""),
+      ablate: shorten(ab.note, 46),
+      reflect: r.next_probe ? "→ " + r.next_probe.pos + " vs " + r.next_probe.neg
+               : (r.diagnosis ? shorten(r.diagnosis, 46) : "converged"),
+    };
+    STAGES.forEach(function (k, i) {
+      var s = stageEl[k]; if (!s.node) return;
+      window.setTimeout(function () {
+        STAGES.forEach(function (kk) { if (stageEl[kk].node) stageEl[kk].node.classList.remove("hot"); });
+        s.node.classList.add("hot", "done");
+        s.val.textContent = vals[k];
+      }, i * 130);
+    });
+  }
+  function shorten(s, n) {
+    s = String(s == null ? "" : s).trim();
+    return s.length > n ? s.slice(0, n - 1) + "…" : (s || "—");
+  }
 
   function setStatus(text, cls) {
     el.status.className = "rr-status" + (cls ? " " + cls : "");
     el.status.innerHTML = (cls === "running" ? '<span class="rr-dot"></span>' : "") +
       escapeHtml(text);
+    cliMeta(text, cls);
   }
   function escapeHtml(s) {
     return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
@@ -50,6 +151,9 @@
     el.feed.innerHTML = "";
     agg = {};
     el.summary.hidden = true; el.aggBox.innerHTML = "";
+    pipeReset(); pipeRunning(true);
+    cliClear(el.problem.value.trim());
+    cliLine('<span class="rr-cli-k">booting causal battery · opening SSE stream …</span>', "dim");
     var q = new URLSearchParams({
       problem: el.problem.value.trim() || "Characterize the tumor microenvironment.",
       track: el.track.value,
@@ -99,6 +203,9 @@
     d.textContent = (rec.reason === "converged" ? "✓ converged — " : "● ") + (rec.note || rec.reason || "done");
     el.feed.appendChild(d);
     setStatus(rec.reason === "converged" ? "converged" : "done (" + (rec.reason || "") + ")", "done");
+    cliLine('<span class="rr-cli-k">── ' + (rec.reason === "converged" ? "✓ converged" : "● " + (rec.reason || "done")) +
+      " ──────────────────</span> " + escapeHtml(rec.note || ""), "hr");
+    cliCursor();
     stop(null);
     el.feed.scrollTop = el.feed.scrollHeight;
   }
@@ -108,7 +215,7 @@
     reset();
     if (text) setStatus(text, cls);
   }
-  function reset() { el.start.disabled = false; el.stop.disabled = true; }
+  function reset() { el.start.disabled = false; el.stop.disabled = true; pipeRunning(false); }
 
   // ---- rendering ----------------------------------------------------------
   function renderIter(r) {
@@ -149,6 +256,8 @@
     el.feed.appendChild(card);
     el.feed.scrollTop = el.feed.scrollHeight;
     updateAgg(r.circuit || [], r.circuit_mode);
+    pipeUpdate(r);
+    cliEmit(r);
   }
 
   function circuitRows(circuit, loadLayer) {
