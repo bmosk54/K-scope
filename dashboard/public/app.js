@@ -111,6 +111,8 @@
     renderQuadrantSelection();
     renderNecessityChart();
     renderVerdict();
+    renderCoverage();
+    renderConfound();
     highlightRail();
   }
   function selectClaimById(id) {
@@ -921,14 +923,22 @@
     const total = Math.max(1, grounded + weak + notCert);
     const bar = d3.select("#coverage-bar");
     bar.selectAll("*").remove();
+    // highlight the segment the CURRENTLY-SELECTED claim falls into, so navigating claims
+    // visibly moves the marker (the counts stay answer-level — the bar is coverage, not per-claim).
+    const cur = currentClaim();
+    const curV = cur ? cur.verdict : null;
     [
-      [grounded, COLOR.GROUNDED],
-      [weak, COLOR.WEAK],
-      [notCert, COLOR.NOT_CERTIFIABLE],
-    ].forEach(([n, c]) => {
-      bar.append("div").attr("class", "coverage-seg").style("width", (n / total) * 100 + "%").style("background", c);
+      [grounded, COLOR.GROUNDED, "GROUNDED"],
+      [weak, COLOR.WEAK, "WEAK"],
+      [notCert, COLOR.NOT_CERTIFIABLE, "NOT_CERTIFIABLE"],
+    ].forEach(([n, c, v]) => {
+      const seg = bar.append("div")
+        .attr("class", "coverage-seg" + (v === curV ? " active" : ""))
+        .style("width", (n / total) * 100 + "%").style("background", c);
+      if (v === curV) seg.attr("title", "this claim → " + v);
     });
-    document.getElementById("coverage-line").textContent = cov.summary;
+    const here = curV ? ` · this claim → ${curV.replace(/_/g, " ")}` : "";
+    document.getElementById("coverage-line").textContent = cov.summary + here;
   }
 
   function renderConfound() {
@@ -945,8 +955,10 @@
 
     const wrap = d3.select(container).append("div").attr("class", "axis-flow");
 
+    const cur = currentClaim();
     const conceptRow = wrap.append("div").attr("class", "axis-row concept");
-    conceptRow.append("div").attr("class", "axis-label").text("Concept axis");
+    conceptRow.append("div").attr("class", "axis-label")
+      .text(cur && cur.contrast ? "Concept axis · " + cur.contrast : "Concept axis");
     conceptRow.append("div").attr("class", "axis-track").append("div").attr("class", "axis-fill").style("width", "100%");
     conceptRow.append("div").html('<span style="color:var(--accent);font-size:14px">&#8594;</span>');
 

@@ -403,8 +403,10 @@ a.nav-item.nav-link { color: var(--text-dim); text-decoration: none; }
 .verdict-sentence { font-size: 14.5px; line-height: 1.5; color: var(--text-dim); }
 
 .coverage-bar-block { margin-bottom: 24px; }
-.coverage-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin-bottom: 8px; }
-.coverage-seg { height: 100%; }
+.coverage-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; margin-bottom: 8px; }
+.coverage-seg { height: 100%; transition: box-shadow .15s, filter .15s; }
+/* the segment the currently-selected claim falls into — moves as you navigate claims */
+.coverage-seg.active { box-shadow: inset 0 0 0 2px var(--text); filter: saturate(1.25) brightness(1.06); }
 .coverage-line { font-size: 12px; color: var(--text-faint); }
 
 .confound-block { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; margin-bottom: 20px; }
