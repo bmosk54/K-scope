@@ -96,14 +96,14 @@ def build_gallery(slide: str, patches, out_html: str, scratch: str,
     mag_txt = f"≈ {mag}×" if mag else "unknown"
     page = (_TEMPLATE
             .replace("__STEM__", html.escape(stem))
-            .replace("__SRCURI__", html.escape(slide))
+            .replace("__SRC_TITLE__", html.escape(stem)).replace("__SRCURI__", html.escape(slide))
             .replace("__OVERVIEW__", over_uri)
             .replace("__PATCHES__", json.dumps(out))
             .replace("__PATCHES_BOTTOM__", "null")
             .replace("__L0W__", str(l0w)).replace("__L0H__", str(l0h))
             .replace("__MPP_NUM__", repr(mpp if mpp else 0.0))
             .replace("__MPP_TXT__", mpp_txt).replace("__MAG_TXT__", mag_txt)
-            .replace("__AXIS_NOTE__", "").replace("__SOURCES__", "null"))
+            .replace("__AXIS_NOTE__", "").replace("__SOURCES__", "null").replace("__AXES__", "null"))
 
     os.makedirs(os.path.dirname(os.path.abspath(out_html)), exist_ok=True)
     with open(out_html, "w", encoding="utf-8") as f:
@@ -171,15 +171,19 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .axis-note .pill { background: color-mix(in srgb, var(--accent) 16%, transparent);
     color: var(--accent); border-radius: 6px; padding: 2px 8px; font-weight: 600; }
 
-  /* source (WSI) switcher on the header link */
-  .src-switch { position: relative; display: inline-flex; align-items: center; gap: 4px; }
-  .src-switch.switchable { cursor: pointer; }
+  /* source (WSI) + axis (concept) switchers */
+  .src-switch, .ax-switch { position: relative; display: inline-flex; align-items: center; gap: 4px; }
+  .ax-switch { gap: 3px; }
+  .src-switch.switchable, .ax-switch.switchable { cursor: pointer; }
   .src-switch.switchable:hover code.k { text-decoration: underline; }
-  .src-caret { color: var(--muted); font-size: 10px; }
-  .src-menu { position: absolute; top: 100%; left: 0; margin-top: 7px; z-index: 30;
+  .ax-switch.switchable:hover .pill { filter: brightness(1.08); }
+  .src-caret, .ax-caret { color: var(--muted); font-size: 10px; }
+  .ax-caret { font-size: 9px; }
+  .src-menu, .ax-menu { position: absolute; top: 100%; left: 0; margin-top: 7px; z-index: 30;
     background: var(--panel); border: 1px solid var(--line); border-radius: 11px; padding: 6px;
     min-width: 260px; box-shadow: 0 14px 34px -14px rgba(0,0,0,.55);
     display: flex; flex-direction: column; gap: 2px; }
+  .ax-menu { min-width: 210px; }
   .src-item { text-align: left; background: none; border: 0; border-radius: 8px; padding: 8px 11px;
     font-family: var(--sans); font-size: 12.5px; color: var(--ink); cursor: pointer;
     display: flex; align-items: center; gap: 8px; }
@@ -225,7 +229,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .thumb .tcap { position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 6px 4px;
     font-size: 10px; line-height: 1.15; color: #fff; text-align: left; font-weight: 500;
     background: linear-gradient(transparent, rgba(15,10,16,.82)); }
-  .thumb[aria-current="true"] { outline-color: var(--accent); }
+  .thumb[aria-current="true"] { outline-color: #ff1f2e; }
   .thumb[aria-current="true"] img { filter: saturate(1.05); }
   .thumb:not([aria-current="true"]) img { opacity: .82; }
   .thumb:hover:not([aria-current="true"]) { transform: translateY(-1px); }
@@ -263,13 +267,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .locbox { position: absolute; border-radius: 3px; transform: translate(-1px,-1px); min-width: 15px; min-height: 15px; }
   .locbox.other { outline: 1.5px solid var(--other);
     box-shadow: 0 0 0 1px rgba(255,255,255,.5); cursor: pointer; }
-  .locbox.active { outline: 2.5px solid var(--accent); z-index: 3;
-    box-shadow: 0 0 0 1.5px #fff, 0 0 16px 4px color-mix(in srgb, var(--accent) 75%, transparent); }
+  .locbox.active { outline: 2px solid #ff1f2e; z-index: 3; box-shadow: 0 0 0 1px #fff; }
   .loc-legend { display: flex; gap: 16px; margin: 7px 2px 0; font-size: 11.5px; color: var(--muted);
     font-family: var(--mono); flex-wrap: wrap; }
   .loc-legend span { display: inline-flex; align-items: center; gap: 6px; }
   .swatch { width: 11px; height: 11px; border-radius: 3px; outline-offset: -1px; }
-  .swatch.a { outline: 2.5px solid var(--accent); }
+  .swatch.a { outline: 2.5px solid #ff1f2e; }
   .swatch.o { outline: 1.5px solid var(--other); }
 
   footer { margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--line);
@@ -307,7 +310,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     <h1>__STEM__</h1>
     <p class="sub">H&amp;E · Aperio SVS · __MAG_TXT__ ·
       <span class="src-switch" id="src-switch">
-        <code class="k" id="src-uri">__SRCURI__</code><span class="src-caret" id="src-caret" hidden>▾</span>
+        <code class="k" id="src-uri" title="__SRCURI__">__SRC_TITLE__</code><span class="src-caret" id="src-caret" hidden>▾</span>
         <span class="src-menu" id="src-menu" hidden></span>
       </span>
     </p>
@@ -477,30 +480,34 @@ _TEMPLATE = r"""<!DOCTYPE html>
   });
 
   // source (WSI) switcher: make the header link open a menu of known slides
-  const SOURCES = __SOURCES__;                      // [{label, href, current}] or null
-  const srcSwitch = document.getElementById('src-switch'),
-        srcMenu = document.getElementById('src-menu'), srcCaret = document.getElementById('src-caret');
-  function buildSourceMenu(items) {
-    if (items.length <= 1) return;                  // only the current slide exists -> no switcher
-    srcCaret.hidden = false;
-    srcSwitch.classList.add('switchable');
-    items.forEach(s => {
-      const it = document.createElement('button');
-      it.type = 'button'; it.className = 'src-item' + (s.current ? ' current' : '');
-      it.textContent = s.label; it.disabled = !!s.current;
-      it.addEventListener('click', (e) => { e.stopPropagation(); if (!s.current) location.href = s.href; });
-      srcMenu.appendChild(it);
-    });
-    srcSwitch.addEventListener('click', () => { srcMenu.hidden = !srcMenu.hidden; });
-    document.addEventListener('click', (e) => { if (!srcSwitch.contains(e.target)) srcMenu.hidden = true; });
-  }
-  if (SOURCES && SOURCES.length > 1) {
-    // only list sources whose gallery file actually exists (no 404s); current is always kept
-    Promise.all(SOURCES.map(s => s.current
+  // Generic dropdown switcher (used for both the WSI source and the ranking axis): keep only
+  // entries whose target gallery exists (HEAD-probe, no 404s), current always kept + on top.
+  function wireSwitcher(switchEl, menuEl, caretEl, items, itemClass) {
+    if (!switchEl || !items || items.length <= 1) return;
+    Promise.all(items.map(s => s.current
         ? Promise.resolve(true)
         : fetch(s.href, { method: 'HEAD' }).then(r => r.ok).catch(() => false)))
-      .then(oks => buildSourceMenu(SOURCES.filter((s, i) => oks[i])));
+      .then(oks => {
+        const avail = items.filter((s, i) => oks[i])
+                           .sort((a, b) => (b.current ? 1 : 0) - (a.current ? 1 : 0));
+        if (avail.length <= 1) return;
+        caretEl.hidden = false;
+        switchEl.classList.add('switchable');
+        avail.forEach(s => {
+          const it = document.createElement('button');
+          it.type = 'button'; it.className = itemClass + (s.current ? ' current' : '');
+          it.textContent = s.label; it.disabled = !!s.current;
+          it.addEventListener('click', (e) => { e.stopPropagation(); if (!s.current) location.href = s.href; });
+          menuEl.appendChild(it);
+        });
+        switchEl.addEventListener('click', () => { menuEl.hidden = !menuEl.hidden; });
+        document.addEventListener('click', (e) => { if (!switchEl.contains(e.target)) menuEl.hidden = true; });
+      });
   }
+  wireSwitcher(document.getElementById('src-switch'), document.getElementById('src-menu'),
+               document.getElementById('src-caret'), __SOURCES__, 'src-item');
+  wireSwitcher(document.getElementById('ax-switch'), document.getElementById('ax-menu'),
+               document.getElementById('ax-caret'), __AXES__, 'src-item ax-item');
 
   // top / bottom-of-axis toggle (only if a bottom set was supplied)
   const rankToggle = document.getElementById('rank-toggle'),

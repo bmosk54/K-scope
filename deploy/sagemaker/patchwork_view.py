@@ -41,23 +41,34 @@ s3 = boto3.client("s3", region_name=REGION)
 # clickable source menu; the href is the sibling gallery file for the SAME concept, so the
 # switch preserves which axis you're viewing. Extend as more slides are extracted.
 KNOWN_WSIS = [
-    ("TCGA-BRCA · invasive carcinoma",
-     "s3://bucketbiolayer/wsi/TCGA-BRCA/"
-     "TCGA-E2-A14P-01Z-00-DX1.663B02FF-C64B-41A6-8685-FD61CD76F9C6.svs"),
-    ("BRACS · breast subtyping",
-     "s3://bucketbiolayer/wsi/BRACS/BRACS_1003675.svs"),
+    {"uri": "s3://bucketbiolayer/wsi/TCGA-BRCA/"
+            "TCGA-E2-A14P-01Z-00-DX1.663B02FF-C64B-41A6-8685-FD61CD76F9C6.svs",
+     "slug": "tcga-brca-a14p", "title": "TCGA-BRCA · invasive carcinoma"},
+    {"uri": "s3://bucketbiolayer/wsi/BRACS/BRACS_1003675.svs",
+     "slug": "bracs-1003675", "title": "BRACS · breast subtyping"},
 ]
 
 
-def build_gallery_lowmem(reader, slide_uri, stem, regions, out_html, win=1536,
-                         quality=86, display_max=1024, overview_max=1400, axis_note="",
-                         regions_bottom=None, sources=None):
-    """Same visualizer UI as wsi_patch_gallery (its _TEMPLATE + _jpeg_uri), but crop each
-    region via openslide read_region (KB-scale random access) instead of the whole level-0
-    plane — so it runs on a small box where the full-plane read (here 8 GB) OOMs.
+# Concepts the axis switcher can flip between (order preserved). Label shown in the menu.
+AXIS_LABELS = {"TUM": "Tumor epithelium (TUM)", "STR": "Stroma (STR)", "LYM": "Lymphocytes (LYM)"}
 
-    regions_bottom (optional): the opposite end of the ranking axis; when given, the gallery
-    ships a Top/Bottom toggle."""
+
+def _resolve_name(wsi_uri, data_stem, slug_override=None, name_override=None):
+    """Map a WSI to a readable (slug, title): filename/URL slug + display title. Looks the
+    slide up in KNOWN_WSIS; --slug/--name override; unknown slides fall back to the raw stem."""
+    entry = next((w for w in KNOWN_WSIS if w["uri"] == wsi_uri
+                  or os.path.splitext(os.path.basename(w["uri"]))[0] == data_stem), None)
+    slug = slug_override or (entry["slug"] if entry else data_stem)
+    title = name_override or (entry["title"] if entry else data_stem)
+    return slug, title
+
+
+def crop_payload(reader, regions, regions_bottom=None, win=1536, quality=86,
+                 display_max=1024, overview_max=1400):
+    """EXPENSIVE step: whole-slide overview + native-res crops -> a template-ready payload
+    (crops as JPEG data-URIs, coords, dims). Cropped via openslide read_region (KB-scale
+    random access) so it runs on a small box. This payload is what gets cached; a UI/template
+    change never needs to recompute it."""
     l0w, l0h = reader.dimensions
     thumb, _ = reader.thumbnail(overview_max)
     over_uri, _ = gallery._jpeg_uri(thumb, quality=82)
@@ -75,20 +86,29 @@ def build_gallery_lowmem(reader, slide_uri, stem, regions, out_html, win=1536,
                                 "w": round(100 * win / l0w, 3), "h": round(100 * win / l0h, 3)}})
         return out
 
-    out = crop_set(regions)
-    out_bottom = crop_set(regions_bottom) if regions_bottom else None
     mpp = reader.mpp
-    mag = round(10.0 / mpp) if mpp else None
+    return {"out": crop_set(regions),
+            "out_bottom": crop_set(regions_bottom) if regions_bottom else None,
+            "over_uri": over_uri, "l0w": l0w, "l0h": l0h,
+            "mpp": mpp, "mag": round(10.0 / mpp) if mpp else None}
+
+
+def render_payload(payload, out_html, stem, slide_uri, axis_note="", sources=None, axes=None):
+    """CHEAP step: fill the gallery template from a precomputed payload. No ranking, no slide
+    reads — this is the ONLY step a UI/template change affects, so it runs in milliseconds."""
+    out, out_bottom, mpp, mag = payload["out"], payload.get("out_bottom"), payload["mpp"], payload["mag"]
     page = (gallery._TEMPLATE
-            .replace("__STEM__", html.escape(stem)).replace("__SRCURI__", html.escape(slide_uri))
-            .replace("__OVERVIEW__", over_uri).replace("__PATCHES__", json.dumps(out))
+            .replace("__STEM__", html.escape(stem)).replace("__SRC_TITLE__", html.escape(stem))
+            .replace("__SRCURI__", html.escape(slide_uri))
+            .replace("__OVERVIEW__", payload["over_uri"]).replace("__PATCHES__", json.dumps(out))
             .replace("__PATCHES_BOTTOM__", json.dumps(out_bottom) if out_bottom is not None else "null")
-            .replace("__L0W__", str(l0w)).replace("__L0H__", str(l0h))
+            .replace("__L0W__", str(payload["l0w"])).replace("__L0H__", str(payload["l0h"]))
             .replace("__MPP_NUM__", repr(mpp if mpp else 0.0))
             .replace("__MPP_TXT__", f"{mpp:.4f} µm/px" if mpp else "unknown")
             .replace("__MAG_TXT__", f"≈ {mag}×" if mag else "unknown")
             .replace("__AXIS_NOTE__", axis_note)
-            .replace("__SOURCES__", json.dumps(sources) if sources else "null"))
+            .replace("__SOURCES__", json.dumps(sources) if sources else "null")
+            .replace("__AXES__", json.dumps(axes) if axes else "null"))
     with open(out_html, "w", encoding="utf-8") as f:
         f.write(page)
     return {"n_patches": len(out)}
@@ -132,6 +152,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--wsi", default="s3://bucketbiolayer/wsi/BRACS/BRACS_1003675.svs")
     ap.add_argument("--pos", default="TUM", help="axis positive class (one-vs-rest) used to rank")
+    ap.add_argument("--name", default=None, help="readable display title shown in the gallery "
+                    "(default: from KNOWN_WSIS, else the raw slide stem)")
+    ap.add_argument("--slug", default=None, help="short filesystem/URL slug for output filenames "
+                    "(default: from KNOWN_WSIS, else the raw slide stem)")
     ap.add_argument("--axis-dataset", default=None,
                     help="reference the concept axis is fit from: default = colon (NCT-CRC); "
                          "'bcss_breast' = breast-native axes (use for a breast WSI)")
@@ -142,94 +166,116 @@ def main():
                          "window, so shown crops don't overlap). Set 0 to disable.")
     ap.add_argument("--cell", type=int, default=28, help="px per patch in the patchwork")
     ap.add_argument("--out", default="/tmp/patchwork")
+    ap.add_argument("--rerank", action="store_true",
+                    help="force a full re-rank + re-crop even if a matching payload cache exists")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     tmp = tempfile.gettempdir()
 
-    stem = os.path.splitext(os.path.basename(args.wsi))[0]
-    local = _dl(args.wsi[5:].split("/", 1)[1], os.path.join(tmp, os.path.basename(args.wsi)))
-    order, scores, M = rank_patches(stem, args.pos, tmp, dataset_slug=args.axis_dataset)
+    data_stem = os.path.splitext(os.path.basename(args.wsi))[0]   # real stem: the S3 embeddings key
+    slug, title = _resolve_name(args.wsi, data_stem, args.slug, args.name)
+    html_path = os.path.join(args.out, f"{slug}_{args.pos}_gallery.html")
 
-    reader = open_wsi(local)
-    mpp = reader.mpp or 0.25
-    step = int(round(224 * max(0.5 / mpp, 1.0)))            # tile footprint in level-0 px
-    psz = step / 16.0                                       # one 14x14 patch's level-0 footprint
-    tx, ty = M["tile_x"], M["tile_y"]
-    pr, pc = M["patch_row"], M["patch_col"]
-
-    def patch_box(idx):
-        x = int(tx[idx] + pc[idx] * psz)
-        y = int(ty[idx] + pr[idx] * psz)
-        return x, y, int(round(psz))
-
-    # 1) assemble the patchwork square (top-N patches in rank order, raster 16xK)
-    top = order[:args.n_square]
-    side = int(round(len(top) ** 0.5))
-    canvas = Image.new("RGB", (side * args.cell, side * args.cell), (245, 245, 245))
-    for k, idx in enumerate(top):
-        x, y, sz = patch_box(idx)
-        patch = reader.read_region((x, y), 0, (sz, sz)).convert("RGB").resize((args.cell, args.cell))
-        r, c = divmod(k, side)
-        if r < side:
-            canvas.paste(patch, (c * args.cell, r * args.cell))
-    pw_path = os.path.join(args.out, f"{stem}_patchwork.png")
-    canvas.save(pw_path)
-    print(f"[patchwork] {len(top)} patches -> {pw_path}  "
-          f"(score {scores[top].min():+.2f}..{scores[top].max():+.2f})", flush=True)
-
-    # 2) density overlay: all selected patch centers on the slide thumbnail
-    thumb, ds = reader.thumbnail(1400)
-    ov = Image.fromarray(thumb).convert("RGB")
-    draw = ImageDraw.Draw(ov, "RGBA")
-    for idx in top:
-        x, y, sz = patch_box(idx)
-        cx, cy = (x + sz / 2) / ds, (y + sz / 2) / ds
-        draw.ellipse([cx - 2, cy - 2, cx + 2, cy + 2], fill=(205, 40, 110, 170))
-    dist_path = os.path.join(args.out, f"{stem}_distribution.png")
-    ov.save(dist_path)
-    print(f"[patchwork] distribution overlay -> {dist_path}", flush=True)
-
-    # 3) the EXISTING visualizer over the top regions (WSI map + highlight the selected).
-    # Spatial NMS: the ranking scores patch TOKENS (~28px apart) but each is shown as a
-    # `win`-px crop, so neighbouring high/low tokens in one homogeneous blob would render as
-    # ~98%-overlapping duplicates. Greedily accept a region only if its center is >= min_sep
-    # from every already-accepted one -> n spatially DISTINCT regions, not n top scores.
-    def select_spread(ranked, n, min_sep):
-        picked, centers, s2 = [], [], min_sep * min_sep
-        for idx in ranked:
-            x, y, sz = patch_box(idx)
-            cx, cy = x + sz / 2, y + sz / 2
-            if all((cx - px) ** 2 + (cy - py) ** 2 >= s2 for px, py in centers):
-                picked.append(idx); centers.append((cx, cy))
-                if len(picked) >= n:
-                    break
-        return picked
-
-    def to_regions(idxs):
-        out = []
-        for k, idx in enumerate(idxs):
-            x, y, sz = patch_box(idx)
-            out.append((x + sz // 2, y + sz // 2, f"#{k + 1}", f"score {scores[idx]:+.2f}"))
-        return out
-
-    regions = to_regions(select_spread(order, args.n_regions, args.min_sep))
-    # opposite end of the axis: the lowest-scoring patches (most un-<pos>), rank 1 = lowest
-    regions_bottom = to_regions(select_spread(order[::-1], args.n_regions, args.min_sep))
-    # per-concept filename so TUM/STR/LYM galleries of one slide coexist (don't overwrite)
-    html_path = os.path.join(args.out, f"{stem}_{args.pos}_gallery.html")
+    # UI-cheap bits (recomputed every run so renames / switcher edits take effect immediately)
     ref_label = {"bcss_breast": "breast (BCSS)", None: "colon (NCT-CRC)"}.get(
         args.axis_dataset, args.axis_dataset)
-    axis_note = (f'<p class="axis-note">Patches ranked by the '
-                 f'<span class="pill">{args.pos}</span> concept axis · fit from {ref_label}</p>')
-    # source switcher: one entry per known WSI; href = that slide's gallery for THIS concept
-    sources = [{"label": lbl,
-                "href": f"{os.path.splitext(os.path.basename(uri))[0]}_{args.pos}_gallery.html",
-                "current": os.path.splitext(os.path.basename(uri))[0] == stem}
-               for lbl, uri in KNOWN_WSIS]
-    meta = build_gallery_lowmem(reader, args.wsi, stem, regions, html_path,
-                                axis_note=axis_note, regions_bottom=regions_bottom, sources=sources)
-    print(f"[patchwork] regional gallery ({meta['n_patches']} regions, existing visualizer UI) "
-          f"-> {html_path}", flush=True)
+    # the concept pill is a switcher: click to flip the ranking axis for THIS slide
+    axis_note = (
+        '<p class="axis-note">Patches ranked by the '
+        '<span class="ax-switch" id="ax-switch">'
+        f'<span class="pill" id="ax-pill">{args.pos}</span>'
+        '<span class="ax-caret" id="ax-caret" hidden>▾</span>'
+        '<span class="ax-menu" id="ax-menu" hidden></span>'
+        '</span>'
+        f' concept axis · fit from {ref_label}</p>')
+    axes = [{"label": AXIS_LABELS.get(a, a), "href": f"{slug}_{a}_gallery.html",
+             "current": a == args.pos} for a in AXIS_LABELS]
+    sources = [{"label": w["title"], "href": f"{w['slug']}_{args.pos}_gallery.html",
+                "current": w["slug"] == slug} for w in KNOWN_WSIS]
+
+    # Payload cache: the ranking + crops are deterministic in these params and are the whole
+    # cost (13GB mmap + 4.3M-patch matmul + slide crops). Cache them, keyed by the ranking
+    # params only, so a UI/template change re-renders in milliseconds. --rerank forces recompute.
+    cache_path = os.path.join(args.out, f".payload_{slug}_{args.pos}.json")
+    key = {"data_stem": data_stem, "pos": args.pos, "axis_dataset": args.axis_dataset,
+           "min_sep": args.min_sep, "n_regions": args.n_regions,
+           "win": 1536, "quality": 86, "display_max": 1024, "overview_max": 1400}
+    payload = None
+    if not args.rerank and os.path.exists(cache_path):
+        try:
+            cached = json.load(open(cache_path))
+            if cached.get("key") == key:
+                payload = cached["payload"]
+                print(f"[patchwork] CACHE HIT — re-render only (no re-rank): {os.path.basename(cache_path)}",
+                      flush=True)
+        except Exception:
+            payload = None
+
+    if payload is None:
+        local = _dl(args.wsi[5:].split("/", 1)[1], os.path.join(tmp, os.path.basename(args.wsi)))
+        order, scores, M = rank_patches(data_stem, args.pos, tmp, dataset_slug=args.axis_dataset)
+        reader = open_wsi(local)
+        mpp = reader.mpp or 0.25
+        step = int(round(224 * max(0.5 / mpp, 1.0)))            # tile footprint in level-0 px
+        psz = step / 16.0                                       # one 14x14 patch's level-0 footprint
+        tx, ty = M["tile_x"], M["tile_y"]
+        pr, pc = M["patch_row"], M["patch_col"]
+
+        def patch_box(idx):
+            x = int(tx[idx] + pc[idx] * psz)
+            y = int(ty[idx] + pr[idx] * psz)
+            return x, y, int(round(psz))
+
+        # patchwork square (top-N patches in rank order, raster 16xK)
+        top = order[:args.n_square]
+        side = int(round(len(top) ** 0.5))
+        canvas = Image.new("RGB", (side * args.cell, side * args.cell), (245, 245, 245))
+        for k, idx in enumerate(top):
+            x, y, sz = patch_box(idx)
+            patch = reader.read_region((x, y), 0, (sz, sz)).convert("RGB").resize((args.cell, args.cell))
+            r, c = divmod(k, side)
+            if r < side:
+                canvas.paste(patch, (c * args.cell, r * args.cell))
+        canvas.save(os.path.join(args.out, f"{slug}_patchwork.png"))
+
+        # density overlay: all selected patch centers on the slide thumbnail
+        thumb, ds = reader.thumbnail(1400)
+        ov = Image.fromarray(thumb).convert("RGB")
+        draw = ImageDraw.Draw(ov, "RGBA")
+        for idx in top:
+            x, y, sz = patch_box(idx)
+            cx, cy = (x + sz / 2) / ds, (y + sz / 2) / ds
+            draw.ellipse([cx - 2, cy - 2, cx + 2, cy + 2], fill=(205, 40, 110, 170))
+        ov.save(os.path.join(args.out, f"{slug}_distribution.png"))
+
+        # Spatial NMS: the ranking scores patch TOKENS (~28px apart) but each is shown as a
+        # `win`-px crop, so neighbouring tokens in one homogeneous blob would render as
+        # ~98%-overlapping duplicates. Greedily accept a region only if its center is >= min_sep
+        # from every already-accepted one -> n spatially DISTINCT regions, not n top scores.
+        def select_spread(ranked, n, min_sep):
+            picked, centers, s2 = [], [], min_sep * min_sep
+            for idx in ranked:
+                x, y, sz = patch_box(idx)
+                cx, cy = x + sz / 2, y + sz / 2
+                if all((cx - px) ** 2 + (cy - py) ** 2 >= s2 for px, py in centers):
+                    picked.append(idx); centers.append((cx, cy))
+                    if len(picked) >= n:
+                        break
+            return picked
+
+        def to_regions(idxs):
+            return [(x + sz // 2, y + sz // 2, f"#{k + 1}", f"score {scores[idx]:+.2f}")
+                    for k, idx in enumerate(idxs) for x, y, sz in [patch_box(idx)]]
+
+        regions = to_regions(select_spread(order, args.n_regions, args.min_sep))
+        regions_bottom = to_regions(select_spread(order[::-1], args.n_regions, args.min_sep))
+        payload = crop_payload(reader, regions, regions_bottom)
+        json.dump({"key": key, "payload": payload}, open(cache_path, "w"))
+        print(f"[patchwork] ranked + cropped; payload cached -> {os.path.basename(cache_path)}", flush=True)
+
+    meta = render_payload(payload, html_path, title, args.wsi, axis_note=axis_note,
+                          sources=sources, axes=axes)
+    print(f"[patchwork] regional gallery ({meta['n_patches']} regions) -> {html_path}", flush=True)
 
 
 if __name__ == "__main__":
