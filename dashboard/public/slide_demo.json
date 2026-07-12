@@ -1,0 +1,9 @@
+{
+  "source": "H-optimus-0 whole-slide inference -> Claude(Sonnet) K-Pro answer (cached from end2end_ho.py)",
+  "substrate": "h_optimus_0 (ViT-g/14, 1536-d)",
+  "n_tiles": 42,
+  "prompt": "Characterize the tumor microenvironment in this slide.",
+  "ho_composition": "TUM 38%, STR 19%, LYM 19%, NORM 9%, MUS 7%, DEB 7%",
+  "tile_agreement": 1.0,
+  "answer": "This colorectal H&E slide is dominated by tumor epithelium (38%): moderately differentiated adenocarcinoma glands embedded within a substantial desmoplastic stroma (19%) of reactive spindle-cell fibroblasts and collagen. A prominent lymphocytic infiltrate (19%) matches the stromal bulk, a brisk peritumoral immune response. Residual normal colonic mucosa (9%) and smooth muscle (7%) sit at the margin, suggesting invasion into the muscle wall, and scattered necrotic debris (7%) reflects central tumor necrosis. Overall a moderately immune-infiltrated, desmoplastic microenvironment with notable lymphocytic engagement relative to stromal bulk."
+}

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>BioLayer — Causal Evidence Cockpit</title>
 <link rel="stylesheet" href="style.css" />
-<script src="https://unpkg.com/d3@7"></script>
+<script src="d3.v7.min.js"></script>
 </head>
 <body>
 <div class="app-shell">
@@ -27,6 +27,7 @@
     </div>
 
     <div class="sidebar-foot">
+      <div class="sidebar-foot-line"><a href="lab.html" style="color:#6c8dfb;text-decoration:none">▶ Certify Console</a></div>
       <div class="sidebar-foot-line">certify_answer()</div>
       <div class="sidebar-foot-line dim">frozen phikon-v2 · NCT-CRC-HE</div>
     </div>
@@ -44,6 +45,40 @@
         <div class="substrate-label" id="substrate-label">phikon-v2 · ViT-L/24 · frozen</div>
         <button class="btn-run" id="btn-run">Run certify_answer()</button>
       </div>
+    </div>
+
+    <!-- ===================================== MCP CONSOLE (before the case) -->
+    <div class="console">
+      <div class="console-row">
+        <div class="console-io">
+          <input type="text" id="c-prompt" value="Characterize the tumor microenvironment." />
+          <textarea id="c-answer">Tumor epithelium with a brisk peritumoral lymphocytic infiltrate, desmoplastic stroma, scattered necrotic debris and extracellular mucin, with residual normal mucosa and smooth muscle at the margin.</textarea>
+          <div class="console-actions">
+            <select id="c-track">
+              <option value="phikon">phikon-v2 (1024-d)</option>
+              <option value="h0">H-optimus-0 (1536-d)</option>
+            </select>
+            <label style="font-size:11.5px;color:#9aa0c0"><input type="checkbox" id="c-bedrock" checked> Bedrock</label>
+            <button id="c-certify">Certify answer →</button>
+            <button class="ghost" id="c-load-slide">Load H-optimus slide answer</button>
+            <span class="console-status" id="c-status"></span>
+          </div>
+        </div>
+        <div class="console-verbs">
+          <span class="vlabel">MCP verbs</span>
+          <div class="vgrid">
+            <button class="ghost" data-verb="hypothesis">hypothesis</button>
+            <button class="ghost" data-verb="design">design</button>
+            <button class="ghost" data-verb="steer">steer</button>
+            <button class="ghost" data-verb="ablate">ablate</button>
+            <button class="ghost" data-verb="specificity">specificity</button>
+            <button class="ghost" data-verb="confound">confound</button>
+            <button class="ghost" data-verb="layered">layered</button>
+            <button class="ghost" data-verb="rehypothesize">rehypoth.</button>
+          </div>
+        </div>
+      </div>
+      <pre class="console-out" id="c-out"></pre>
     </div>
 
     <div class="claim-strip">
@@ -66,6 +101,7 @@
           <div class="stage-col">
             <div id="tile-stage" class="tile-stage"></div>
             <div class="tile-caption" id="case-caption">—</div>
+            <div class="tile-caption dim" style="font-size:11px;opacity:.7">Tissue render is a schematic illustration — the verdict, scores, contrast and reasoning trace are live from the substrate.</div>
           </div>
           <div class="readout-col">
             <div class="readout-panel">

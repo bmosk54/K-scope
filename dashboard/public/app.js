@@ -698,8 +698,10 @@
       if (d.TRACKS) window.TRACKS = d.TRACKS;
       recomputeState();
       setLiveBadge(true);
+      return true;
     } catch (e) {
       setLiveBadge(false); // static mock retained
+      return false;
     }
   }
 
@@ -728,17 +730,70 @@
     running = false;
   }
 
+  // ---------------------------------------------------------------- MCP console
+  function initConsole() {
+    const $ = (id) => document.getElementById(id);
+    const out = $("c-out");
+    const showOut = (o) => { out.textContent = typeof o === "string" ? o : JSON.stringify(o, null, 2); out.classList.add("show"); };
+
+    $("c-load-slide").addEventListener("click", async () => {
+      try {
+        const s = await (await fetch(apiUrl("slide_demo.json"))).json();
+        $("c-prompt").value = s.prompt; $("c-answer").value = s.answer; $("c-track").value = "h0";
+        $("c-status").textContent = "loaded slide answer · " + s.ho_composition;
+      } catch (e) { $("c-status").textContent = "slide_demo.json unavailable"; }
+    });
+
+    // certify the current prompt/answer -> drives the Case / Proof / Verdict views
+    $("c-certify").addEventListener("click", async () => {
+      const btn = $("c-certify"); btn.disabled = true; $("c-status").textContent = "running the causal battery…";
+      try {
+        const r = await fetch(apiUrl("api/certify_answer"), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: $("c-prompt").value, answer: $("c-answer").value,
+                                 track: $("c-track").value, bedrock: $("c-bedrock").checked }) });
+        const d = await r.json();
+        if (d.error) throw new Error(d.error);
+        window.CARD = d.CARD; recomputeState(); setLiveBadge(true); renderAll(); goToView("case");
+        $("c-status").textContent = d.CARD.coverage.summary + " · scope " + (d.CARD.certification_scope || {}).level;
+        showOut(d.CARD.claims.map((c) => (c.verdict + "  " + (c.concept || "—") + "  " + (c.contrast || (c.reason || ""))).trim()).join("\n"));
+      } catch (e) { $("c-status").textContent = "failed: " + e.message; }
+      btn.disabled = false;
+    });
+
+    // MCP verb buttons -> raw verb output
+    document.querySelectorAll(".console-verbs button[data-verb]").forEach((b) => {
+      b.addEventListener("click", async () => {
+        const verb = b.dataset.verb; b.disabled = true; $("c-status").textContent = verb + "…";
+        try {
+          const r = await fetch(apiUrl("api/verb/" + verb), {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ track: $("c-track").value, question: $("c-prompt").value }) });
+          const d = await r.json();
+          if (d.error) throw new Error(d.error);
+          showOut(d.result); $("c-status").textContent = verb + " ✓";
+        } catch (e) { $("c-status").textContent = verb + " failed: " + e.message; }
+        b.disabled = false;
+      });
+    });
+  }
+
   // ---------------------------------------------------------------- init
-  async function init() {
-    await bootstrapData();
+  function init() {
+    // Render the static mock IMMEDIATELY so the page never blanks, then upgrade to
+    // live data in the background when /api/all returns (~15s) and re-render.
+    setLiveBadge(false);
     renderAll();
 
     initNavigation();
+    initConsole();
     goToView("case");
 
     document.getElementById("claim-prev").addEventListener("click", () => selectClaim(selectedIdx - 1));
     document.getElementById("claim-next").addEventListener("click", () => selectClaim(selectedIdx + 1));
     document.getElementById("btn-run").addEventListener("click", runCertifyAnimation);
+
+    bootstrapData().then((ok) => { if (ok) renderAll(); });
 
     window.addEventListener("resize", () => {
       renderHistology();

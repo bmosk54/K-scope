@@ -329,3 +329,27 @@ body {
 .view-wrap::-webkit-scrollbar { width: 9px; }
 .view-wrap::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }
 .view-wrap::-webkit-scrollbar-track { background: transparent; }
+
+/* -------- MCP console (before the case) -------- */
+.console { border-bottom: 1px solid #232946; padding: 12px 22px 14px; background: #0f1428; }
+.console-row { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+.console-io { flex: 1 1 420px; min-width: 300px; }
+.console-io input, .console-io textarea, .console select {
+  width: 100%; background: #0b0e1c; color: #e7e9f5; border: 1px solid #2d3355;
+  border-radius: 7px; padding: 7px 10px; font: inherit; font-size: 12.5px; }
+.console-io textarea { min-height: 54px; resize: vertical; margin-top: 6px; }
+.console-actions { display: flex; gap: 8px; align-items: center; margin-top: 7px; flex-wrap: wrap; }
+.console-verbs { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; max-width: 210px; }
+.console-verbs .vlabel { font-size: 10.5px; color: #7a80a4; text-transform: uppercase; letter-spacing: .05em; }
+.console-verbs .vgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.console button { background: #6c8dfb; color: #08102a; border: 0; border-radius: 7px;
+  padding: 6px 12px; font: inherit; font-weight: 600; font-size: 12px; cursor: pointer; }
+.console button.ghost { background: #222846; color: #cfd4f0; font-weight: 500; }
+.console button:disabled { opacity: .5; cursor: default; }
+.console select { width: auto; font-size: 12px; padding: 6px 8px; }
+.console-out { margin-top: 10px; background: #0b0e1c; border: 1px solid #232946;
+  border-radius: 7px; padding: 9px 11px; font-family: ui-monospace, monospace;
+  font-size: 11px; color: #b9c0e6; max-height: 190px; overflow: auto; white-space: pre-wrap;
+  display: none; }
+.console-out.show { display: block; }
+.console-status { font-size: 11.5px; color: #7a80a4; margin-left: 4px; }
