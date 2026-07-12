@@ -57,19 +57,46 @@
   // Typewriter queue — print the reasoning lines one-by-one (like a live agent trace)
   // rather than dumping a whole iteration at once, and stay in order even if a new
   // iteration lands while the previous block is still printing.
-  var cliQueue = [], cliTyping = false, CLI_DELAY = 90;
+  var cliQueue = [], cliTyping = false, cliGen = 0, CLI_DELAY = 90, CHAR_DELAY = 12;
   function cliEnqueue(lines) {
     for (var i = 0; i < lines.length; i++) if (lines[i]) cliQueue.push(lines[i]);
+    if (!cliTyping) cliPump();
+  }
+  // Enqueue a line that generates char-by-char (like the agent emitting tokens) so the
+  // trace is never a dead gap while the SSE stream spins up. prefixHtml stays static; only
+  // `text` types out.
+  function cliEnqueueTyped(text, cls, prefixHtml) {
+    cliQueue.push({ typed: true, text: String(text || ""), c: cls || "", prefix: prefixHtml || "" });
     if (!cliTyping) cliPump();
   }
   function cliPump() {
     if (!cliQueue.length) { cliTyping = false; cliCursor(); return; }
     cliTyping = true;
     var it = cliQueue.shift();
+    if (it.typed) { cliTypeLine(it, cliPump); return; }
     cliLine(it.h, it.c);
     window.setTimeout(cliPump, CLI_DELAY);
   }
-  function cliFlush() { cliQueue = []; cliTyping = false; }
+  // Type `it.text` one character at a time into a fresh line, then continue the queue.
+  // Guarded by cliGen so a run that gets flushed mid-type can't bleed into the next one.
+  function cliTypeLine(it, done) {
+    if (!el.cliBody) { done(); return; }
+    var gen = cliGen;
+    var d = document.createElement("div");
+    d.className = "rr-cli-line" + (it.c ? " " + it.c : "");
+    var cur = el.cliBody.querySelector(".rr-cli-cursorline");
+    if (cur) el.cliBody.insertBefore(d, cur); else el.cliBody.appendChild(d);
+    var i = 0;
+    (function step() {
+      if (gen !== cliGen) return;                // this run was flushed — stop silently
+      i++;
+      d.innerHTML = it.prefix + '<span class="rr-cli-v">' + escapeHtml(it.text.slice(0, i)) + "</span>" +
+        (i < it.text.length ? '<span class="rr-cli-cursor">▋</span>' : "");
+      el.cliBody.scrollTop = el.cliBody.scrollHeight;
+      window.setTimeout(i < it.text.length ? step : done, i < it.text.length ? CHAR_DELAY : CLI_DELAY);
+    })();
+  }
+  function cliFlush() { cliQueue = []; cliTyping = false; cliGen++; }
 
   // Emit one iteration's FULL reasoning as terminal lines mirroring the 5 pipeline
   // stages: probe → certify → locate → ablate → reflect. Every reasoning field the
@@ -266,10 +293,19 @@
     pipeReset(); pipeRunning(true);
     if ($("rr-tile-iter")) $("rr-tile-iter").textContent = "starting…";
     drawTile(null);
+    var prob = el.problem.value.trim() || "Characterize the tumor microenvironment.";
     cliClear(el.problem.value.trim());
     cliLine('<span class="rr-cli-k">booting causal battery · opening SSE stream …</span>', "dim");
+    // Immediately show the agent feeding the problem to Sonnet — the prompt types out
+    // char-by-char so the reasoning trace is alive from frame one, even before (or if) the
+    // backend stream produces its first stage.
+    cliEnqueue([{ h: '<span class="rr-cli-k">▶ feeding problem to</span> ' +
+      '<span class="rr-cli-v">claude-sonnet</span> ' +
+      '<span class="rr-cli-k">· decomposing into candidate concept probes …</span>', c: "dim" }]);
+    cliEnqueueTyped(prob, "", '<span class="rr-cli-prompt">⤷</span> ');
+    cliEnqueue([{ h: '<span class="rr-cli-k">parsing target concepts · proposing the first probe axis …</span>', c: "dim" }]);
     var q = new URLSearchParams({
-      problem: el.problem.value.trim() || "Characterize the tumor microenvironment.",
+      problem: prob,
       track: el.track.value,
       iters: el.iters.value || "5",
       // Sonnet proposes the probes (graceful heuristic fallback if Bedrock is unavailable);
