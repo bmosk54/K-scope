@@ -13,13 +13,21 @@ Controlled-access files are skipped with a warning (they'd need a GDC token).
 """
 import argparse
 import json
+import os
 import re
 import sys
 import urllib.request
 
 import boto3
 
-from .. import config
+# Works both as a package module (python -m biolayer.data.wsi_ingest) and standalone
+# (copied into a SageMaker container, imported as top-level `wsi_ingest`).
+try:
+    from .. import config
+    _BUCKET, _REGION = config.BUCKET, config.REGION
+except ImportError:  # standalone: no parent package
+    _BUCKET = os.environ.get("SM_BUCKET", "bucketbiolayer")
+    _REGION = os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
 
 GDC_FILES_API = "https://api.gdc.cancer.gov/files/"
 GDC_DATA_API = "https://api.gdc.cancer.gov/data/"
@@ -88,8 +96,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("ids", nargs="*", help="GDC UUIDs / data links / portal URLs")
     ap.add_argument("--manifest", help="file with one UUID/URL per line (# comments ok)")
-    ap.add_argument("--bucket", default=config.BUCKET)
-    ap.add_argument("--region", default=config.REGION)
+    ap.add_argument("--bucket", default=_BUCKET)
+    ap.add_argument("--region", default=_REGION)
     args = ap.parse_args()
 
     items = list(args.ids)
