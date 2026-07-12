@@ -36,7 +36,9 @@ def adapt_card(card):
     claims = []
     for c in card.get("claims", []):
         cv = c.get("contrast_validation", {}) or {}
-        live = c.get("live") or {}
+        # _render emits the live curve under "live_necessity" already in UI shape
+        # ({intervened_on_input, curve:[{layer,gap,z,bites}]}).
+        live = c.get("live_necessity") or {}
         item = {
             "id": _slug(c.get("claim")),
             "claim": c.get("claim"),
@@ -71,8 +73,8 @@ def adapt_card(card):
         if live.get("curve"):
             item["live_necessity"] = {
                 "intervened_on_input": live.get("intervened_on_input", True),
-                "curve": [{"layer": e.get("layer"), "gap": e.get("necessity_gap"),
-                           "z": e.get("gap_vs_null_z"), "bites": e.get("bites")}
+                "curve": [{"layer": e.get("layer"), "gap": e.get("gap"),
+                           "z": e.get("z"), "bites": e.get("bites")}
                           for e in live["curve"]],
             }
         claims.append(item)
@@ -206,9 +208,24 @@ def build_mcp_verbs():
     ]
 
 
+def cached_live_card():
+    """The precomputed LIVE certify card (public/live_card.json from
+    precompute_live_card.py), or None. Running the live source-intervention per request is
+    too heavy for the UI, so build_all serves this cached genuine-necessity card when it
+    exists and falls back to the cached-necessity build otherwise."""
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "public", "live_card.json")
+    if os.path.exists(p):
+        try:
+            with open(p) as f:
+                return json.load(f)
+        except Exception:
+            return None
+    return None
+
+
 def build_all(prompt=DEMO_PROMPT, answer=DEMO_ANSWER, track="phikon", use_bedrock=False):
     return {
-        "CARD": build_card(prompt, answer, track=track, use_bedrock=use_bedrock),
+        "CARD": cached_live_card() or build_card(prompt, answer, track=track, use_bedrock=use_bedrock),
         "DESIGNED_PROBES": build_designed(prompt, use_bedrock=use_bedrock),
         "MCP_VERBS": build_mcp_verbs(),
         "TRACKS": build_tracks(),
