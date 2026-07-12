@@ -1,0 +1,18 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BiolayerWSIList",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::bucketbiolayer",
+      "Condition": {"StringLike": {"s3:prefix": ["wsi/*"]}}
+    },
+    {
+      "Sid": "BiolayerWSIRead",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::bucketbiolayer/wsi/*"
+    }
+  ]
+}
