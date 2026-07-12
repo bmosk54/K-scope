@@ -27,6 +27,7 @@
       <div class="nav-item" data-view="verdict"><span class="nav-idx">04</span><span>Verdict</span></div>
       <a class="nav-item nav-link" href="intervene.html"><span class="nav-idx">05</span><span>Intervention Studio</span><span class="nav-ext">↗</span></a>
       <div class="nav-item" data-view="research"><span class="nav-idx">06</span><span>AutoResearch</span></div>
+      <a class="nav-item nav-link" href="BRACS_1003675_TUM_gallery.html"><span class="nav-idx">07</span><span>Slide Gallery</span><span class="nav-ext">↗</span></a>
     </div>
 
     <div class="sidebar-foot">
@@ -50,23 +51,23 @@
     <div class="console">
       <div class="infer-grid">
         <div class="slide-col">
-          <div class="col-label">Input slide · <span class="dimlabel">H-optimus-0 reads this</span></div>
-          <img id="slide-img" class="slide-img" src="slide.png" alt="input slide (H&E tiles)" />
-          <div class="slide-meta" id="slide-meta">loading slide…</div>
+          <div class="col-label">Input tiles · <span class="dimlabel">tile-level mosaic — H-optimus-0 reads each independently</span></div>
+          <img id="slide-img" class="slide-img" src="slide.png" alt="tile-level mosaic of independent NCT-CRC-HE H&E tiles" />
+          <div class="slide-meta" id="slide-meta">loading tiles…</div>
         </div>
         <div class="io-col">
           <div class="col-label">Prompt</div>
-          <textarea id="c-prompt" class="io-prompt">Give a full diagnostic assessment: tumor grade and mitotic activity, the cellular immune infiltrate, invasive features, and molecular and staging status.</textarea>
+          <textarea id="c-prompt" class="io-prompt">Input is a tile-level mosaic of 24 independent NCT-CRC-HE tiles (a sampling grid — the tiles are not spatially contiguous, so there is no adjacency information). Encoder tissue composition: TUM 42%, LYM 33%, STR 17%, NORM 4%, MUS 4%. Give a full diagnostic assessment: tumor grade, the cellular immune infiltrate, invasive features, and molecular / staging status.</textarea>
           <div class="io-row">
             <select id="c-track">
               <option value="phikon">phikon-v2 (1024-d)</option>
               <option value="h0">H-optimus-0 (1536-d)</option>
             </select>
-            <button id="c-submit">Submit slide + prompt →</button>
+            <button id="c-submit">Submit tiles + prompt →</button>
             <button class="ghost" id="c-hypothesis">Hypothesis ↺ optimize prompt</button>
             <span class="console-status" id="c-status"></span>
           </div>
-          <div class="col-label">K-Pro answer <span class="dimlabel">(Claude, inferred from the slide)</span></div>
+          <div class="col-label">K-Pro answer <span class="dimlabel">(Claude, inferred from the tile composition)</span></div>
           <textarea id="c-answer" class="io-answer" placeholder="Submit the slide + prompt to generate the K-Pro answer…">Moderately differentiated adenocarcinoma with malignant glandular cells and frequent mitotic figures in desmoplastic stroma. A brisk tumor-infiltrating lymphocytic infiltrate with admixed plasma cells is present. There is perineural invasion and the tumor is staged pT3N1. The lesion is high-grade and microsatellite-instability-high with a BRAF V600E mutation, portending a poor five-year prognosis.</textarea>
           <div class="io-row">
             <label class="dimlabel"><input type="checkbox" id="c-bedrock" checked> Bedrock decompose</label>
@@ -103,7 +104,7 @@
       <div class="empty-state" id="empty-state">
         <div class="empty-mark">◎</div>
         <div class="empty-title">No evidence card yet</div>
-        <div class="empty-sub">Submit the slide + prompt to get a K-Pro answer, then <b>Run certify</b> —
+        <div class="empty-sub">Submit the tiles + prompt to get a K-Pro answer, then <b>Run certify</b> —
           the causal battery (necessity · sufficiency · specificity vs matched-random null)
           populates the Case, Proof and Verdict below.</div>
       </div>

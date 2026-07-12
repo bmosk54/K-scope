@@ -91,7 +91,15 @@ class ClaudeBedrock:
             "independently-checkable concept claims. Output ONLY a JSON array. Each "
             "element: {\"text\": <the atomic phrase>, \"concept\": <one name from the "
             "vocabulary, or null if none fits — do NOT force a fit>, \"polarity\": "
-            "\"present\" or \"absent\"}. One element per distinct assertion.")
+            "\"present\" or \"absent\"}. One element per distinct assertion. "
+            "IMPORTANT: the substrate is TILE-LEVEL with NO notion of spatial position or "
+            "adjacency. A claim whose testable content is spatial/positional — e.g. "
+            "'peritumoral' / 'intratumoral' location, immune-inflamed vs -excluded vs "
+            "-desert, tertiary lymphoid structures, tumor-vs-immune spatial relationship, "
+            "perineural or lymphovascular invasion — has NO tile-level concept: set its "
+            "concept to null so it is honestly declined. Keep the underlying PRESENCE claim "
+            "separate (e.g. 'lymphocytic infiltrate present' maps to the immune concept; the "
+            "'peritumoral' spatial qualifier is its own null-concept claim).")
         user = f"Vocabulary: {vocab}\n\nAnswer:\n{answer}\n\nJSON array:"
         text = self._invoke(system, user)
         raw = _extract_json_array(text)

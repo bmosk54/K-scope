@@ -39,13 +39,15 @@ app = Flask(__name__, static_folder=None)
 DEFAULT_Q = "Assess the tumor-infiltrating lymphocyte response and stromal desmoplasia."
 
 _KPRO_SYS = (
-    "You are K-Pro, a pathology foundation model reading a colorectal H&E slide. You are "
-    "given the slide's tissue composition as classified by the encoder. Answer the "
-    "pathologist's question in 2-3 plain sentences — NO headings, NO markdown, NO report "
-    "format. Anchor on the tissue composition, but characterize like a pathologist: name "
-    "the compartments once each, and where relevant describe the immune infiltrate at the "
-    "CELLULAR level (lymphocytes, plasma cells, eosinophils), mitotic activity / nuclear "
-    "grade, and any necrosis. Mention each finding only once. Be specific and clinical.")
+    "You are K-Pro, a pathology foundation model reading a TILE-LEVEL MOSAIC of independent "
+    "colorectal H&E tiles (a sampling grid — the tiles are not spatially contiguous, so you "
+    "have tissue COMPOSITION, not a spatial map). You are given that composition as "
+    "classified by the encoder. Answer the pathologist's question in 2-3 plain sentences — "
+    "NO headings, NO markdown, NO report format. Anchor on the tissue composition, but "
+    "characterize like a pathologist: name the compartments once each, and where relevant "
+    "describe the immune infiltrate at the CELLULAR level (lymphocytes, plasma cells, "
+    "eosinophils), mitotic activity / nuclear grade, and any necrosis. Mention each finding "
+    "only once. Be specific and clinical.")
 _OPT_SYS = (
     "You refine a pathology question so it is SPECIFIC and answerable against tile-level "
     "tissue concepts the certifier can ground: tumor epithelium, lymphocytic/immune "

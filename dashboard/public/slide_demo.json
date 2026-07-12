@@ -1,10 +1,11 @@
 {
-  "source": "H-optimus-0 (ViT-g/14, 1536-d) whole-slide inference over real NCT-CRC-HE tiles",
+  "source": "Mosaic of 24 independent 224px NCT-CRC-HE tiles (real Kather colorectal H&E), classified one-by-one by frozen H-optimus-0 (ViT-g/14, 1536-d). This is a TILE-LEVEL sampling grid, not a whole slide — the tiles are not spatially contiguous, so there is no adjacency information.",
   "substrate": "h_optimus_0",
+  "sampling": "tile-level · 24 independent tiles · no spatial adjacency",
   "n_tiles": 24,
   "image": "slide.png",
   "cols": 6,
-  "prompt": "Give a full diagnostic assessment: tumor grade and mitotic activity, the cellular immune infiltrate, invasive features, and molecular and staging status.",
+  "prompt": "Input is a tile-level mosaic of 24 independent NCT-CRC-HE tiles (a sampling grid — the tiles are not spatially contiguous, so there is no adjacency information). Encoder tissue composition: TUM 42%, LYM 33%, STR 17%, NORM 4%, MUS 4%. Give a full diagnostic assessment: tumor grade, the cellular immune infiltrate, invasive features, and molecular / staging status.",
   "ho_composition": "TUM 42%, LYM 33%, STR 17%, NORM 4%, MUS 4%",
   "tile_agreement": 1.0
 }
