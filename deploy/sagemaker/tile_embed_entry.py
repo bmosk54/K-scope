@@ -54,12 +54,13 @@ def _embed(model, tf, tile_dir, device, batch=32):
 
 def _push_vectors(F, coords, stem, bucket_arn, index):
     c = boto3.client("s3vectors")
+    index_arn = f"{bucket_arn}/index/{index}"                   # put_vectors wants indexArn
     vecs = [{"key": f"{stem}/{int(x)}_{int(y)}",
              "data": {"float32": F[i].astype("float32").tolist()},
              "metadata": {"slide": stem, "x": int(x), "y": int(y)}}
             for i, (x, y) in enumerate(coords)]
     for i in range(0, len(vecs), 500):                          # API batches ~500
-        c.put_vectors(vectorBucketArn=bucket_arn, indexName=index, vectors=vecs[i:i + 500])
+        c.put_vectors(indexArn=index_arn, vectors=vecs[i:i + 500])
     return len(vecs)
 
 

@@ -49,7 +49,8 @@ def main():
     ap.add_argument("--filters", default="whitespace,tissue")
     ap.add_argument("--mpp", default="0.5")
     ap.add_argument("--tile-px", default="224")
-    ap.add_argument("--vector-index", help="h0-vector index name; omit to skip vector push")
+    ap.add_argument("--vector-index", default="layerbioindex",
+                    help="h0-vector index (dim 1536, cosine); set '' to skip vector push")
     ap.add_argument("--region", default=os.environ.get("AWS_DEFAULT_REGION", "us-west-2"))
     args = ap.parse_args()
     if not args.role:
