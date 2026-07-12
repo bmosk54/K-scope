@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>BioLayer — Causal Evidence Cockpit</title>
 <link rel="stylesheet" href="style.css" />
-<script src="https://unpkg.com/d3@7"></script>
+<script src="d3.v7.min.js"></script>
 </head>
 <body>
 <div class="app-shell">
@@ -21,12 +21,15 @@
     </div>
 
     <div class="nav-list">
-      <div class="nav-item" data-view="case"><span class="nav-idx">01</span><span>Case</span></div>
-      <div class="nav-item" data-view="proof"><span class="nav-idx">02</span><span>Proof</span></div>
-      <div class="nav-item" data-view="verdict"><span class="nav-idx">03</span><span>Verdict</span></div>
+      <div class="nav-item" data-view="prompt"><span class="nav-idx">01</span><span>Prompt</span></div>
+      <div class="nav-item" data-view="case"><span class="nav-idx">02</span><span>Case</span></div>
+      <div class="nav-item" data-view="proof"><span class="nav-idx">03</span><span>Proof</span></div>
+      <div class="nav-item" data-view="verdict"><span class="nav-idx">04</span><span>Verdict</span></div>
+      <a class="nav-item nav-link" href="intervene.html"><span class="nav-idx">05</span><span>Intervention Studio</span><span class="nav-ext">↗</span></a>
     </div>
 
     <div class="sidebar-foot">
+      <div class="sidebar-foot-line"><a href="lab.html" style="color:#6c8dfb;text-decoration:none">▶ Certify Console</a></div>
       <div class="sidebar-foot-line">certify_answer()</div>
       <div class="sidebar-foot-line dim">frozen phikon-v2 · NCT-CRC-HE</div>
     </div>
@@ -46,6 +49,45 @@
       </div>
     </div>
 
+    <!-- ============================== INFERENCE CONSOLE (slide -> answer -> certify) -->
+    <div class="console">
+      <div class="infer-grid">
+        <div class="slide-col">
+          <div class="col-label">Input slide · <span class="dimlabel">H-optimus-0 reads this</span></div>
+          <img id="slide-img" class="slide-img" src="slide.png" alt="input slide (H&E tiles)" />
+          <div class="slide-meta" id="slide-meta">loading slide…</div>
+        </div>
+        <div class="io-col">
+          <div class="col-label">Prompt</div>
+          <textarea id="c-prompt" class="io-prompt">Describe cancer cells, tumor-infiltrating lymphocytes, plasma cells, and mitotic figures at the invasive margin.</textarea>
+          <div class="io-row">
+            <select id="c-track">
+              <option value="phikon">phikon-v2 (1024-d)</option>
+              <option value="h0">H-optimus-0 (1536-d)</option>
+            </select>
+            <button id="c-submit">Submit slide + prompt →</button>
+            <button class="ghost" id="c-hypothesis">Hypothesis ↺ optimize prompt</button>
+            <span class="console-status" id="c-status"></span>
+          </div>
+          <div class="col-label">K-Pro answer <span class="dimlabel">(Claude, inferred from the slide)</span></div>
+          <textarea id="c-answer" class="io-answer" placeholder="Submit the slide + prompt to generate the K-Pro answer…"></textarea>
+          <div class="io-row">
+            <label class="dimlabel"><input type="checkbox" id="c-bedrock" checked> Bedrock decompose</label>
+            <button id="c-certify">Run certify →</button>
+            <div class="verbchips">
+              <button class="chip" data-verb="steer">steer</button>
+              <button class="chip" data-verb="ablate">ablate</button>
+              <button class="chip" data-verb="design">design</button>
+              <button class="chip" data-verb="specificity">specificity</button>
+              <button class="chip" data-verb="confound">confound</button>
+              <button class="chip" data-verb="layered">layered</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <pre class="console-out" id="c-out"></pre>
+    </div>
+
     <div class="claim-strip">
       <button class="strip-nav" id="claim-prev" aria-label="previous claim">&#8249;</button>
       <div class="strip-body">
@@ -60,12 +102,21 @@
 
     <div class="view-wrap">
 
+      <div class="empty-state" id="empty-state">
+        <div class="empty-mark">◎</div>
+        <div class="empty-title">No evidence card yet</div>
+        <div class="empty-sub">Submit the slide + prompt to get a K-Pro answer, then <b>Run certify</b> —
+          the causal battery (necessity · sufficiency · specificity vs matched-random null)
+          populates the Case, Proof and Verdict below.</div>
+      </div>
+
       <!-- ========================================================= CASE -->
       <div class="view active" id="view-case">
         <div class="case-grid">
           <div class="stage-col">
             <div id="tile-stage" class="tile-stage"></div>
             <div class="tile-caption" id="case-caption">—</div>
+            <div class="tile-caption dim" style="font-size:11px;opacity:.7">Tissue render is a schematic illustration — the verdict, scores, contrast and reasoning trace are live from the substrate.</div>
           </div>
           <div class="readout-col">
             <div class="readout-panel">
@@ -79,6 +130,36 @@
 
       <!-- ========================================================= PROOF -->
       <div class="view" id="view-proof">
+
+        <!-- Answer Flow: how one answer's atomic claims flow, as a group, to a verdict -->
+        <div class="answer-flow">
+          <div class="aflow-head">
+            <div class="aflow-head-left">
+              <span class="aflow-chip">02</span>
+              <div>
+                <div class="aflow-title">One answer, twelve claims, one honest split</div>
+                <div class="aflow-sub">Every atomic claim the K-Pro answer makes flows through a concept axis to a verdict. Declined claims are a feature, not a bug.</div>
+              </div>
+            </div>
+            <div class="aflow-badge" id="aflow-badge">—</div>
+          </div>
+
+          <div class="aflow-body">
+            <div class="aflow-sankey-col">
+              <div id="sankey-chart"></div>
+              <div class="sankey-legend">
+                <span class="skl"><i class="sk-sw GROUNDED"></i>GROUNDED</span>
+                <span class="skl"><i class="sk-sw WEAK"></i>WEAK (capped)</span>
+                <span class="skl"><i class="sk-sw NOT_CERTIFIABLE"></i>NOT_CERTIFIABLE</span>
+              </div>
+            </div>
+            <div class="aflow-rail-col">
+              <div class="rail-head">Click a claim to drive the histology + causal-map + necessity panels.</div>
+              <div class="claim-rail" id="claim-rail"></div>
+            </div>
+          </div>
+        </div>
+
         <div class="proof-grid">
           <div class="proof-col">
             <div class="section-label">Necessity × specificity — every certifiable claim, sized by sufficiency</div>

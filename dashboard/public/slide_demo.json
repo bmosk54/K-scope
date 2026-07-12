@@ -1,0 +1,10 @@
+{
+  "source": "H-optimus-0 (ViT-g/14, 1536-d) whole-slide inference over real NCT-CRC-HE tiles",
+  "substrate": "h_optimus_0",
+  "n_tiles": 24,
+  "image": "slide.png",
+  "cols": 6,
+  "prompt": "Describe cancer cells, tumor-infiltrating lymphocytes, plasma cells, and mitotic figures at the invasive margin.",
+  "ho_composition": "TUM 42%, LYM 33%, STR 17%, NORM 4%, MUS 4%",
+  "tile_agreement": 1.0
+}

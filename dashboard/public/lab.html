@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>BioLayer — Certify Console</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0d1020; color: #e7e9f5;
+         font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  a { color: #6c8dfb; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 26px 20px 60px; }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  .sub { color: #9aa0c0; font-size: 12.5px; margin-bottom: 20px; }
+  .panel { background: #151a30; border: 1px solid #262c48; border-radius: 12px;
+           padding: 16px 18px; margin-bottom: 16px; }
+  label { display: block; font-size: 12px; color: #9aa0c0; text-transform: uppercase;
+          letter-spacing: .04em; margin: 10px 0 5px; }
+  input[type=text], textarea, select {
+    width: 100%; background: #0d1020; color: #e7e9f5; border: 1px solid #2d3355;
+    border-radius: 8px; padding: 9px 11px; font: inherit; }
+  textarea { min-height: 120px; resize: vertical; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+  button { background: #6c8dfb; color: #08102a; border: 0; border-radius: 8px;
+           padding: 9px 16px; font-weight: 600; cursor: pointer; }
+  button.ghost { background: #222846; color: #cfd4f0; }
+  button:disabled { opacity: .55; cursor: default; }
+  .hint { font-size: 12px; color: #7a80a4; }
+  .cov { font-size: 15px; margin: 4px 0 12px; }
+  .scope { font-size: 12px; color: #9aa0c0; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid #232946; vertical-align: top; }
+  th { color: #9aa0c0; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .badge { font-weight: 700; font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .GROUNDED { background: rgba(61,220,151,.15); color: #3ddc97; }
+  .WEAK { background: rgba(232,178,62,.15); color: #e8b23e; }
+  .NOT_CERTIFIABLE { background: rgba(122,127,160,.18); color: #a6abcb; }
+  .mono { font-variant-numeric: tabular-nums; }
+  details { margin-top: 14px; } summary { cursor: pointer; color: #9aa0c0; }
+  pre { background: #0b0e1c; border: 1px solid #232946; border-radius: 8px; padding: 12px;
+        overflow: auto; font-size: 11.5px; max-height: 340px; }
+  .err { color: #ef6572; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>BioLayer · Certify Console</h1>
+  <div class="sub">Type a K-Pro prompt + answer (or load our H-optimus slide-inference answer) and
+    certify it live on the frozen substrate. &nbsp;·&nbsp; <a href="./">← evidence-card dashboard</a>
+    &nbsp;·&nbsp; <a href="intervene.html">Intervention Studio →</a></div>
+
+  <div class="panel">
+    <label>Slide inference (H-optimus-0, cached)</label>
+    <div id="slide-info" class="hint">loading slide readout…</div>
+    <div class="row">
+      <button class="ghost" id="btn-load-slide">Load slide answer ↓</button>
+      <span class="hint">fills the answer with what Claude wrote from our 42-tile H-optimus slide</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <label for="prompt">Prompt (question)</label>
+    <input type="text" id="prompt" value="Characterize the tumor microenvironment." />
+    <label for="answer">Answer (K-Pro / Claude)</label>
+    <textarea id="answer">Tumor epithelium with a brisk peritumoral lymphocytic infiltrate, desmoplastic stroma, scattered necrotic debris and extracellular mucin, with residual normal mucosa and smooth muscle at the margin.</textarea>
+    <div class="row">
+      <label style="margin:0">Substrate</label>
+      <select id="track" style="width:auto">
+        <option value="phikon">phikon — Phikon-v2 (ViT-L, 1024-d)</option>
+        <option value="h0">h0 — H-optimus-0 (ViT-g, 1536-d)</option>
+      </select>
+      <label style="margin:0"><input type="checkbox" id="bedrock" checked style="width:auto"> Bedrock decompose</label>
+      <button id="btn-certify">Certify →</button>
+      <span class="hint" id="status"></span>
+    </div>
+  </div>
+
+  <div class="panel" id="result" style="display:none">
+    <div class="cov" id="cov"></div>
+    <div class="scope" id="scope"></div>
+    <table id="claims-table"></table>
+    <details><summary>raw certificate JSON</summary><pre id="raw"></pre></details>
+  </div>
+</div>
+
+<script>
+  // same-origin by default; ?api=http://host:port overrides (matches app.js)
+  var API_BASE = (window.API_BASE || new URLSearchParams(location.search).get("api") || "").replace(/\/+$/, "");
+  var apiUrl = function (p) { return API_BASE ? API_BASE + "/" + p : p; };
+  var $ = function (id) { return document.getElementById(id); };
+
+  // load the cached slide-inference answer
+  fetch("slide_demo.json").then(function (r) { return r.json(); }).then(function (s) {
+    window._slide = s;
+    $("slide-info").innerHTML =
+      "<b>" + s.substrate + "</b> over " + s.n_tiles + " tiles → composition <b>" +
+      s.ho_composition + "</b> (tile agreement " + s.tile_agreement + ")";
+  }).catch(function () { $("slide-info").textContent = "slide_demo.json unavailable"; });
+
+  $("btn-load-slide").addEventListener("click", function () {
+    if (!window._slide) return;
+    $("prompt").value = window._slide.prompt;
+    $("answer").value = window._slide.answer;
+    $("track").value = "h0";
+    $("status").textContent = "loaded the H-optimus slide answer — press Certify";
+  });
+
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>]/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); }
+
+  function render(card) {
+    $("result").style.display = "";
+    $("cov").textContent = (card.coverage && card.coverage.summary) || "";
+    var sc = card.certification_scope || {};
+    $("scope").textContent = "scope: " + (sc.level || "—") + " — " + (sc.concept_level_claim || "");
+    var rows = ["<tr><th>verdict</th><th>concept</th><th>contrast</th><th>necessity</th><th>sufficiency</th><th>specificity</th><th>note</th></tr>"];
+    (card.claims || []).forEach(function (c) {
+      var s = c.scores || {};
+      var note = c.verdict === "NOT_CERTIFIABLE" ? esc(c.reason || "")
+        : ((c.contrast_validation && c.contrast_validation.intensity_adjudication) || "");
+      rows.push("<tr>" +
+        '<td><span class="badge ' + c.verdict + '">' + c.verdict + "</span></td>" +
+        "<td>" + esc(c.concept || "—") + "</td>" +
+        "<td>" + esc(c.contrast || "—") + "</td>" +
+        '<td class="mono">' + (s.necessity != null ? s.necessity : "—") + "</td>" +
+        '<td class="mono">' + (s.sufficiency != null ? s.sufficiency : "—") + "</td>" +
+        '<td class="mono">' + (s.specificity != null ? s.specificity : "—") + "</td>" +
+        '<td class="hint">' + note + "</td></tr>");
+    });
+    $("claims-table").innerHTML = rows.join("");
+    $("raw").textContent = JSON.stringify(card, null, 2);
+  }
+
+  $("btn-certify").addEventListener("click", function () {
+    var btn = $("btn-certify");
+    btn.disabled = true;
+    $("status").innerHTML = "running the causal battery on the substrate…";
+    fetch(apiUrl("api/certify_answer"), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: $("prompt").value, answer: $("answer").value,
+        track: $("track").value, bedrock: $("bedrock").checked }),
+    }).then(function (r) {
+      if (!r.ok) throw new Error("API " + r.status);
+      return r.json();
+    }).then(function (d) {
+      if (d.error) throw new Error(d.error);
+      render(d.CARD || d);
+      $("status").textContent = "done";
+    }).catch(function (e) {
+      $("status").innerHTML = '<span class="err">failed: ' + esc(e.message) + "</span>";
+    }).then(function () { btn.disabled = false; });
+  });
+</script>
+</body>
+</html>

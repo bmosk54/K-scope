@@ -52,6 +52,17 @@ def serving_status():
     return serving.status()
 
 
+def certify_slide(slide_paths, model="phikon_v2", concepts=None, n_null=10):
+    """PER-SLIDE certificate: ONE slide (its H&E tile image paths) in -> the encoder's
+    readout class distribution + per-concept necessity measured on THIS slide's real
+    forward pass (intervened_on_input=true). Axis + readout probe are precomputed from a
+    labeled reference, so the slide itself carries no labels. Call `warmup` first."""
+    from PIL import Image
+    from .. import serving
+    imgs = [Image.open(p).convert("RGB") for p in slide_paths]
+    return serving.certify_slide(model, slide_images=imgs, concepts=concepts, n_null=n_null)
+
+
 def embed(images=None, s3_tiles=None, slide_s3=None, keys=None, push_index=None,
           slide_name="query", endpoint=None, region=None, max_tiles=16, mpp=0.5,
           filters=None, vector_bucket_arn=None):
@@ -249,6 +260,16 @@ def layered(model="phikon_v2", split="train", pos="TUM", neg="LYM",
     return {"concept": f"{pos}_vs_{neg}", "model": model, "space": space,
             "necessity_layered": intervene.layered_curve(
                 model, split, pos, neg, space=space, n_null=n_null)}
+
+
+def axis_field(model="phikon_v2", split="train", pos="TUM", neg="LYM",
+               space="global", track=None):
+    """Layer-resolved concept-axis activation field (real per-tile projections + necessity
+    gap vs matched-random null). Powers the Studio's Goodfire-style layer heat panels."""
+    model, pos, neg, _ = _resolve(track, model, pos, neg)
+    return {"concept": f"{pos}_vs_{neg}", "model": model, "space": space,
+            "axis_field": intervene.axis_field(
+                model, split, pos, neg, space=space, artifacts_dir=loader.ARTIFACTS_DIR)}
 
 
 def confound_verb(model="phikon_v2", split="train", pos="TUM", neg="LYM", track=None):
