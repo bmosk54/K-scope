@@ -1,5 +1,5 @@
 /**
- * BioLayer dashboard rendering. Reads window.CARD / DESIGNED_PROBES /
+ * KScope dashboard rendering. Reads window.CARD / DESIGNED_PROBES /
  * TRACKS / MIL / CONFOUND from data.js. No build step.
  *
  * Structure: 3 views (Case / Proof / Verdict) sharing one persistent
@@ -1195,7 +1195,7 @@
       // hand the REAL certified card to the Intervention Studio (separate page) so its
       // layer visualisation runs on this exact run, not the mock.
       try {
-        localStorage.setItem("biolayer:lastCard", JSON.stringify({
+        localStorage.setItem("kscope:lastCard", JSON.stringify({
           card: d.CARD, track: $c("c-track").value, at: new Date().toISOString() }));
       } catch (e) { /* storage unavailable — Studio falls back to /api/all */ }
       renderAll(); goToView("case");

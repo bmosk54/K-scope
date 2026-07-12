@@ -1,5 +1,5 @@
 /**
- * BioLayer — Intervention Studio.
+ * KScope — Intervention Studio.
  *
  * Rebuilt around the LIVE layer-by-layer intervention (card.claims[].live_necessity),
  * NOT the cached readout projection and NOT a spatial per-tile field. Our ablate acts on
@@ -48,7 +48,7 @@
   // ------------------------------------------------------------------ data load
   async function loadCard() {
     try {
-      const stash = JSON.parse(localStorage.getItem("biolayer:lastCard") || "null");
+      const stash = JSON.parse(localStorage.getItem("kscope:lastCard") || "null");
       if (stash && stash.card && stash.card.claims) {
         state.card = stash.card; state.track = stash.track || "phikon"; state.source = "certify";
         return;

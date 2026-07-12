@@ -3,49 +3,76 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>BioLayer — Certify Console</title>
+<title>KScope — Certify Console</title>
+<script>
+  // Follow the theme picked in the cockpit (shared localStorage), applied pre-paint.
+  (function () { try {
+    var t = localStorage.getItem("kscope:theme");
+    if (t) document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {} })();
+</script>
 <style>
-  :root { color-scheme: light; }
+  :root {
+    color-scheme: light;
+    --bg:#FDF6ED; --panel:#FFFFFF; --recessed:#FBF6EC; --border:#EAE3D5;
+    --text:#1E1E1E; --dim:#5C594F; --faint:#8C8577;
+    --accent:#12959E; --btn-bg:#1E1E1E; --btn-fg:#FFFFFF; --ghost:#F0EADD;
+    --success:#12916A; --warning:#B5852A; --danger:#C8434F; --neutral:#8C8577;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg:#0b0c13; --panel:#14151f; --recessed:#0b0e1c; --border:rgba(255,255,255,.12);
+    --text:#eef0f8; --dim:#b4b8cf; --faint:#8f94b0;
+    --accent:#4fc3cc; --btn-bg:#4fc3cc; --btn-fg:#0b0c13; --ghost:#222846;
+    --success:#3ddc97; --warning:#e8b23e; --danger:#ef6572; --neutral:#8f94b0;
+  } }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg:#0b0c13; --panel:#14151f; --recessed:#0b0e1c; --border:rgba(255,255,255,.12);
+    --text:#eef0f8; --dim:#b4b8cf; --faint:#8f94b0;
+    --accent:#4fc3cc; --btn-bg:#4fc3cc; --btn-fg:#0b0c13; --ghost:#222846;
+    --success:#3ddc97; --warning:#e8b23e; --danger:#ef6572; --neutral:#8f94b0;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; background: #FDF6ED; color: #1E1E1E;
+  body { margin: 0; background: var(--bg); color: var(--text);
          font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-  a { color: #12959E; }
+  a { color: var(--accent); }
   .wrap { max-width: 960px; margin: 0 auto; padding: 26px 20px 60px; }
   h1 { font-size: 20px; margin: 0 0 2px; }
-  .sub { color: #5C594F; font-size: 12.5px; margin-bottom: 20px; }
-  .panel { background: #FFFFFF; border: 1px solid #EAE3D5; border-radius: 12px;
+  .sub { color: var(--dim); font-size: 12.5px; margin-bottom: 20px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
            padding: 16px 18px; margin-bottom: 16px; box-shadow: 0 8px 28px rgba(30,26,18,.07); }
-  label { display: block; font-size: 12px; color: #5C594F; text-transform: uppercase;
+  label { display: block; font-size: 12px; color: var(--dim); text-transform: uppercase;
           letter-spacing: .04em; margin: 10px 0 5px; }
   input[type=text], textarea, select {
-    width: 100%; background: #FFFFFF; color: #1E1E1E; border: 1px solid #EAE3D5;
+    width: 100%; background: var(--panel); color: var(--text); border: 1px solid var(--border);
     border-radius: 8px; padding: 9px 11px; font: inherit; }
   textarea { min-height: 120px; resize: vertical; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
-  button { background: #1E1E1E; color: #fff; border: 0; border-radius: 8px;
+  button { background: var(--btn-bg); color: var(--btn-fg); border: 0; border-radius: 999px;
            padding: 9px 16px; font-weight: 600; cursor: pointer; }
-  button.ghost { background: #F0EADD; color: #1E1E1E; }
+  button.ghost { background: var(--ghost); color: var(--text); }
   button:disabled { opacity: .55; cursor: default; }
-  .hint { font-size: 12px; color: #8C8577; }
+  .hint { font-size: 12px; color: var(--faint); }
   .cov { font-size: 15px; margin: 4px 0 12px; }
-  .scope { font-size: 12px; color: #5C594F; margin-bottom: 12px; }
+  .scope { font-size: 12px; color: var(--dim); margin-bottom: 12px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid #EAE3D5; vertical-align: top; }
-  th { color: #5C594F; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
   .badge { font-weight: 700; font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
-  .GROUNDED { background: rgba(61,220,151,.15); color: #12916A; }
-  .WEAK { background: rgba(232,178,62,.15); color: #B5852A; }
-  .NOT_CERTIFIABLE { background: rgba(122,127,160,.18); color: #8C8577; }
+  .GROUNDED { background: rgba(61,220,151,.15); color: var(--success); }
+  .WEAK { background: rgba(232,178,62,.15); color: var(--warning); }
+  .NOT_CERTIFIABLE { background: rgba(122,127,160,.18); color: var(--neutral); }
   .mono { font-variant-numeric: tabular-nums; }
-  details { margin-top: 14px; } summary { cursor: pointer; color: #5C594F; }
-  pre { background: #FBF6EC; border: 1px solid #EAE3D5; border-radius: 8px; padding: 12px;
+  details { margin-top: 14px; } summary { cursor: pointer; color: var(--dim); }
+  pre { background: var(--recessed); border: 1px solid var(--border); border-radius: 8px; padding: 12px;
         overflow: auto; font-size: 11.5px; max-height: 340px; }
-  .err { color: #C8434F; }
+  .err { color: var(--danger); }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>BioLayer · Certify Console</h1>
+  <h1>KScope · Certify Console</h1>
   <div class="sub">Type a K-Pro prompt + answer (or load our H-optimus slide-inference answer) and
     certify it live on the frozen substrate. &nbsp;·&nbsp; <a href="./">← evidence-card dashboard</a>
     &nbsp;·&nbsp; <a href="intervene.html">Intervention Studio →</a></div>
