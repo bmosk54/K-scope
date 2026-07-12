@@ -218,6 +218,9 @@ _TEMPLATE = r"""<!DOCTYPE html>
     pointer-events: none; box-sizing: border-box; border-radius: 2px; min-width: 6px; min-height: 6px;
     border: 2px dashed #ff1f2e;
     box-shadow: 0 0 0 1px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.55); }
+  /* bold red arrow that points at the (tiny) 14×14 patch box from the top-right */
+  .unit-arrow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
+    overflow: visible; filter: drop-shadow(0 1px 2px rgba(0,0,0,.55)); }
 
   /* three regions: thumb rail · stage · aside */
   .layout { display: grid; gap: 20px; margin-top: 16px;
@@ -386,6 +389,17 @@ _TEMPLATE = r"""<!DOCTYPE html>
           <img class="stage-img" id="stage-img" alt="">
           <div class="unit-box box-tile" id="box-tile" hidden></div>
           <div class="unit-box box-patch" id="box-patch" hidden></div>
+          <!-- bold arrow that points at the tiny 14×14 box (shown only in patch mode) -->
+          <svg class="unit-arrow" id="unit-arrow" viewBox="0 0 100 100" hidden aria-hidden="true">
+            <defs>
+              <marker id="ua-head" markerUnits="userSpaceOnUse" markerWidth="7" markerHeight="7"
+                      refX="4.6" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 Z" fill="#ff1f2e"></path>
+              </marker>
+            </defs>
+            <line x1="87" y1="11" x2="52.4" y2="47.6" stroke="#ff1f2e" stroke-width="2.6"
+                  stroke-linecap="round" marker-end="url(#ua-head)"></line>
+          </svg>
         </div>
       </div>
       <div class="stage-foot">
@@ -588,6 +602,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   const unitToggle = document.getElementById('unit-toggle'),
         utPatch = document.getElementById('ut-patch'), utTile = document.getElementById('ut-tile');
   const boxTile = document.getElementById('box-tile'), boxPatch = document.getElementById('box-patch');
+  const unitArrow = document.getElementById('unit-arrow');
 
   function currentSet() {
     if (unit === 'tile') return curEnd === 'bottom' ? PATCHES_TILE_BOTTOM : PATCHES_TILE_TOP;
@@ -612,6 +627,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     boxTile.hidden = false;
     boxTile.style.width = boxTile.style.height = (100 * px / view).toFixed(2) + '%';
     boxPatch.hidden = true;
+    if (unitArrow) unitArrow.hidden = unit !== 'patch';   // arrow only for the tiny 14×14 box
   }
 
   function setEnd(which) {
