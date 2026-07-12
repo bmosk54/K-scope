@@ -1,0 +1,85 @@
+{
+ "tile_png": "input_tile.png",
+ "answer": "TUM",
+ "answer_tissue": "tumour epithelium",
+ "confidence": 0.9985,
+ "n_active": 40,
+ "n_features": 6144,
+ "k": 40,
+ "layer": 27,
+ "n_blocks": 40,
+ "ks": [
+  1,
+  2,
+  5,
+  10,
+  20,
+  40
+ ],
+ "curves": {
+  "sae": [
+   0.8638,
+   0.6235,
+   0.2011,
+   0.0379,
+   0.0104,
+   0.0243
+  ],
+  "random": [
+   0.9983,
+   0.9983,
+   0.9986,
+   0.9965,
+   0.9918,
+   0.9939
+  ],
+  "probe": [
+   0.9886,
+   0.9886,
+   0.9886,
+   0.9886,
+   0.9886,
+   0.9886
+  ]
+ },
+ "probe_accuracy": 0.9979,
+ "features": [
+  {
+   "feature": 1950,
+   "effect": 0.1347,
+   "activation": 0.163,
+   "looks_like": "tumour epithelium",
+   "purity_pct": 100,
+   "exemplars_png": "sae/tile_feat1950.png"
+  },
+  {
+   "feature": 2744,
+   "effect": 0.0147,
+   "activation": 0.108,
+   "looks_like": "tumour epithelium",
+   "purity_pct": 100,
+   "exemplars_png": "sae/tile_feat2744.png"
+  },
+  {
+   "feature": 1879,
+   "effect": 0.0064,
+   "activation": 0.118,
+   "looks_like": "tumour epithelium",
+   "purity_pct": 100,
+   "exemplars_png": "sae/tile_feat1879.png"
+  },
+  {
+   "feature": 2270,
+   "effect": 0.0063,
+   "activation": 0.038,
+   "looks_like": "normal mucosa",
+   "purity_pct": 99,
+   "exemplars_png": "sae/tile_feat2270.png"
+  }
+ ],
+ "where_png": "sae/tile_where.png",
+ "fallback": {
+  "MUC": 0.818,
+  "NORM": 0.147
+ }
+}

@@ -1041,6 +1041,7 @@
     verdict: { title: "Verdict", tag: "certified claim, confound check, honest coverage" },
     research: { title: "AutoResearch", tag: "autonomous causal-circuit discovery — probe · certify · locate · ablate · reflect" },
     gallery: { title: "Slide Gallery", tag: "whole-slide patch gallery — patches ranked by concept axis" },
+    evidence: { title: "Evidence", tag: "inside the embedding — which visual features H-Optimus-0 built this tile from, and what they look like in tissue" },
   };
 
   function goToView(id) {

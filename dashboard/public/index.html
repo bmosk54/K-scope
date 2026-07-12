@@ -12,6 +12,7 @@
   } catch (e) {} })();
 </script>
 <link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="evidence.css" />
 <script src="d3.v7.min.js"></script>
 </head>
 <body>
@@ -31,6 +32,7 @@
       <div class="nav-item" data-view="verdict"><span class="nav-idx">04</span><span>Verdict</span></div>
       <div class="nav-item" data-view="research"><span class="nav-idx">05</span><span>AutoResearch</span></div>
       <div class="nav-item" data-view="gallery"><span class="nav-idx">06</span><span>Slide Gallery</span></div>
+      <div class="nav-item" data-view="evidence"><span class="nav-idx">07</span><span>Evidence</span></div>
     </div>
 
     <div class="sidebar-foot">
@@ -324,6 +326,88 @@
                 title="Slide patch gallery" loading="lazy"></iframe>
       </div>
 
+      <!-- ===================================================== EVIDENCE (SAE) -->
+      <!-- certify says WHETHER to believe the claim. This says WHAT the model looked at,
+           and whether the belief survives deleting it. Driven entirely by the precomputed
+           sae/sae.json — no GPU, no HF gating at serve time. -->
+      <div class="view" id="view-evidence">
+
+        <!-- Why this view exists, and what it is NOT. certify returns a verdict and no tissue;
+             this returns the tissue and a causal test. The scope note is deliberate: this is a
+             population property of H-Optimus-0, not a readout of the single tile in Prompt. -->
+        <!-- ===== YOUR TILE, FIRST. The same tile as Prompt, all the way through. ===== -->
+        <div class="ev-tile" id="ev-tile"></div>
+
+        <!-- How we did it — after the result, not before it. -->
+        <div class="ev-how" id="ev-how"></div>
+
+        <!-- ===== Does it hold beyond this one tile? The population view, as corroboration. ===== -->
+        <div class="ev-general-h">
+          <h2>Zooming out: how the model encodes each tissue type</h2>
+          <p><b>The question:</b> for a whole tissue type, does H-Optimus-0 concentrate the work in a few
+             features, or spread it across many? We erase the features most associated with the tissue,
+             across 32 tiles of that type, and watch the model’s confidence. <b>Concentrated is the better
+             outcome for us</b>: it means a short list of features explains that tissue, and a short list is
+             something you can actually look at. Spread out means no such summary exists. It differs by
+             tissue type, and that is a fact about the dataset worth knowing.</p>
+        </div>
+
+        <div class="ev-switch">
+          <div class="ev-switch-lab">Tissue type</div>
+          <div class="ev-tabs" id="ev-tabs"></div>
+        </div>
+
+        <div class="ev-verdict" id="ev-verdict"></div>
+        <div class="ev-stats" id="ev-stats"></div>
+
+        <div class="ev-panel">
+          <div class="section-label">Erase the features, across 32 tiles of this type</div>
+          <div class="ev-panel-sub">Red: the features most associated with this tissue. Grey: the same
+            number picked at random, as a control.</div>
+          <div id="ev-chart"></div>
+        </div>
+
+        <div class="ev-summary" id="ev-summary"></div>
+
+        <!-- Everything a reviewer needs, and nothing the pathologist has to read. Last. -->
+        <details class="ev-method ev-method-foot">
+          <summary>Method &amp; scope</summary>
+          <div class="ev-method-body">
+            <p><b>The model’s task.</b> Given one 224&times;224px tile, pick one of nine tissue types:
+            tumour epithelium, lymphocytes, cancer-associated stroma, normal mucosa, mucus, smooth muscle,
+            adipose, debris, background. H-Optimus-0 (frozen) encodes the tile; a linear head reads the
+            answer out at 99.8% accuracy.</p>
+            <p><b>What a “feature” is.</b> A sparse autoencoder was trained on 90,000 tile embeddings from
+            block 27 — unsupervised, no labels. It learned 6,144 directions and must reconstruct any tile
+            using only 40 of them. Those directions are the model’s own visual vocabulary; we did not
+            define them.</p>
+            <p><b>The test.</b> We delete a feature from the <i>live</i> network at block 27 and let the
+            remaining 13 blocks run, so the model genuinely recomputes. Every deletion is matched against
+            deleting the same <i>number</i> of random features.</p>
+            <p><b>How this relates to <i>certify</i>.</b> The two answer different questions and are meant to
+            be used together. Linear probes are excellent at <i>detecting</i> whether a concept is present in
+            the model, which is what <i>certify</i> needs and what probes are built for. The features here are
+            what the model <i>computes with</i>, which is what you need if you want to remove something and see
+            whether the answer depended on it. Detection and intervention are different jobs. (Measured: a
+            99.8%-accurate probe direction, deleted the same way at the same depth, moves the model from 0.999
+            to 0.989 — it is a read-out, not a load-bearing part. Deleting the features above moves it to
+            0.024.)</p>
+            <p><b>The two pictures come from two different autoencoders, at two different depths.</b> The
+            feature cards come from the whole-tile SAE (block 27, 6,144 features, 40 active). The heat map
+            comes from a <i>separate</i> SAE fit on 1.44M individual patch tokens at block 39 (6,144 features,
+            32 active). Different basis, different layer — so the map shows <i>where tissue of the answered
+            type sits</i>, not where card 1’s feature fires. We tried projecting the tile feature onto the
+            patch tokens to unify them; it does not work (that direction was fit on CLS vectors and is
+            non-zero on ~1 of 256 patches), so we report the two honestly rather than pretending they are the
+            same object.</p>
+            <p><b>Limits.</b> These are features <b>the model</b> uses — not validated biomarkers. This
+            dataset has no molecular or outcome labels, so nothing here speaks to prognosis. A pathologist
+            must confirm the tissue.</p>
+          </div>
+        </details>
+        <details class="ev-raw" id="ev-raw"></details>
+      </div>
+
     </div>
   </div>
 </div>
@@ -371,5 +455,6 @@
     if (mq && mq.addEventListener) mq.addEventListener("change", sync);
   })();
 </script>
+<script src="evidence.js"></script>
 </body>
 </html>
