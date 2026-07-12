@@ -22,6 +22,13 @@
   let selectedIdx = certifiable.findIndex((c) => c.id === "tils");
   if (selectedIdx < 0) selectedIdx = 0;
 
+  // Backend base URL. Default "" = same-origin (works when the whole Node server is
+  // port-forwarded to localhost). Override to point the UI at a separately-forwarded
+  // SageMaker API: set window.API_BASE, or open the page with ?api=http://localhost:4173
+  const API_BASE = (window.API_BASE ||
+    new URLSearchParams(location.search).get("api") || "").replace(/\/+$/, "");
+  const apiUrl = (p) => (API_BASE ? API_BASE + "/" + p : p);
+
   // recompute the derived claim state after a live CARD override (fetch / Run button)
   function recomputeState() {
     certifiable = window.CARD.claims.filter((c) => !!c.scores);
@@ -681,7 +688,7 @@
   }
   async function bootstrapData() {
     try {
-      const r = await fetch("api/all", { headers: { Accept: "application/json" } });
+      const r = await fetch(apiUrl("api/all"), { headers: { Accept: "application/json" } });
       if (!r.ok) throw new Error("api " + r.status);
       const d = await r.json();
       if (d.error) throw new Error(d.error);
@@ -706,7 +713,7 @@
     btn.textContent = "running battery…";
     goToView("case");
     try {
-      const r = await fetch("api/certify_answer", {
+      const r = await fetch(apiUrl("api/certify_answer"), {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: window.CARD.prompt, answer: window.CARD.answer,
                                track: window.CARD.track, bedrock: true }),

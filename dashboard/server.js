@@ -38,12 +38,22 @@ function runBridge(args, cb) {
 function sendJson(res, code, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8",
-                        "Cache-Control": "no-store" });
+                        "Cache-Control": "no-store",
+                        // allow the UI to be hosted on a different origin (e.g. served
+                        // from the laptop while the API is a forwarded SageMaker port)
+                        "Access-Control-Allow-Origin": "*" });
   res.end(body);
 }
 
 // /api/* -> real certify infra via the bridge. Returns true if it handled the request.
 function handleApi(req, res, urlPath) {
+  if (req.method === "OPTIONS") {                 // CORS preflight for cross-origin UI
+    res.writeHead(204, { "Access-Control-Allow-Origin": "*",
+                         "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+                         "Access-Control-Allow-Headers": "Content-Type" });
+    res.end();
+    return true;
+  }
   if (urlPath === "/api/all" && req.method === "GET") {
     runBridge(["all"], (err, json) =>
       err ? sendJson(res, 503, { error: String(err.message || err) }) : sendJson(res, 200, json));
@@ -105,7 +115,8 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`BioLayer dashboard running at http://localhost:${PORT}`);
-  console.log(`Serving ${PUBLIC_DIR}`);
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`BioLayer dashboard running at http://localhost:${PORT} (bound 0.0.0.0)`);
+  console.log(`Serving ${PUBLIC_DIR}  ·  API: /api/all, /api/certify_answer`);
+  console.log(`Forward this port to your laptop, then open http://localhost:${PORT}`);
 });
