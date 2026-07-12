@@ -279,10 +279,16 @@ def main():
     if not slides:
         raise SystemExit("no slides: set SLIDE_S3 / SLIDES_S3 / MANIFEST_S3")
 
-    # Load H-optimus-0 ONCE for the whole batch (cached in S3 across jobs).
-    restored = _restore_model_cache(s3, cfg["bucket"])
+    # Load H-optimus-0 ONCE for the whole batch (cached in S3 across jobs). Default: restore
+    # the cache and load OFFLINE — no HF token needed (the launcher only ships it on reseed).
+    _hf_home()                                                  # always set HF_HOME (DL + seed target)
+    force = os.environ.get("FORCE_RESEED") == "1"
+    restored = False if force else _restore_model_cache(s3, cfg["bucket"])
     tok = _resolve_hf_token()
-    if tok and not restored:                                    # auth only needed for fresh DL
+    if not restored:                                            # need a fresh gated download
+        if not tok:
+            raise SystemExit("no S3 model cache to restore and no HF_TOKEN — relaunch the "
+                             "launcher with --reseed-cache (HF auth) to (re)seed the cache.")
         os.environ["HF_TOKEN"] = tok
         os.environ["HUGGING_FACE_HUB_TOKEN"] = tok
     device = "cuda" if torch.cuda.is_available() else "cpu"

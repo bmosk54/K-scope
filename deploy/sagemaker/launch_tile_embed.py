@@ -55,6 +55,10 @@ def main():
                     help="dtype for the 256-vector PATCH list (float16 halves size/RAM vs float32)")
     ap.add_argument("--vector-index", default="layerbioindex",
                     help="h0-vector index for the GLOBAL/CLS list (dim 1536, cosine); '' to skip")
+    ap.add_argument("--reseed-cache", action="store_true",
+                    help="re-download H-optimus-0 from HuggingFace and refresh the S3 model "
+                         "cache (needs HF auth in env). Default reuses the cached weights "
+                         "offline, so the HF token is NOT sent (it would leak into CloudWatch).")
     ap.add_argument("--region", default=os.environ.get("AWS_DEFAULT_REGION", "us-west-2"))
     args = ap.parse_args()
     if not args.role:
@@ -80,10 +84,14 @@ def main():
         "sagemaker_program": json.dumps("tile_embed_entry.py"),
         "sagemaker_submit_directory": json.dumps(f"s3://{BUCKET}/{code_key}"),
     }
-    # HF OAuth token can exceed the 512-char Environment cap; hyperparameters allow
-    # more and stay within our account (not the team-shared bucket).
-    if os.environ.get("HF_TOKEN"):
-        hp["HF_TOKEN"] = json.dumps(os.environ["HF_TOKEN"])
+    # The HF token is ONLY needed to (re)download the gated weights. By default we reuse the
+    # S3 model cache offline and never send it — it would otherwise echo into CloudWatch. Pass
+    # it (and force a fresh download + reseed) only when --reseed-cache is set.
+    if args.reseed_cache:
+        env["FORCE_RESEED"] = "1"
+        if not os.environ.get("HF_TOKEN"):
+            raise SystemExit("--reseed-cache needs HF_TOKEN in env (run `hf auth login`).")
+        hp["HF_TOKEN"] = json.dumps(os.environ["HF_TOKEN"])   # hyperparam dodges 512-char env cap
 
     sm = boto3.client("sagemaker", region_name=args.region)
     sm.create_training_job(
