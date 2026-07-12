@@ -200,10 +200,16 @@ def api_autoresearch():
     ablate -> reflect -> next), then a final `{done:true}` frame. GET so the browser's
     EventSource can drive it; the loop runs entirely on the existing certify battery.
     """
+    def _int(name, default, lo, hi):
+        try:
+            return max(lo, min(int(request.args.get(name, default)), hi))
+        except (TypeError, ValueError):
+            return default
+
     problem = request.args.get("problem", DEFAULT_Q)
     track = request.args.get("track", "phikon")
-    iters = max(1, min(int(request.args.get("iters", 5)), 12))
-    n_null = max(20, min(int(request.args.get("n_null", 60)), 300))
+    iters = _int("iters", 5, 1, 12)
+    n_null = _int("n_null", 60, 20, 300)
     bedrock = request.args.get("bedrock", "0") in ("1", "true", "True")
     live = request.args.get("live", "0") in ("1", "true", "True")
 

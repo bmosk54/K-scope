@@ -10,6 +10,7 @@
   var shell = document.querySelector(".app-shell");
   var es = null;                 // active EventSource
   var agg = {};                  // layer -> {seen, bites, maxGap} across iterations
+  var serverErr = false;         // a named server 'error' frame was shown this run
 
   var el = {
     rail: $("research-rail"), collapse: $("rr-collapse"), nav: $("nav-research"),
@@ -57,6 +58,7 @@
       live: el.live.checked ? "1" : "0",
     });
     el.start.disabled = true; el.stop.disabled = false;
+    serverErr = false;
     setStatus("connecting…", "running");
     try {
       es = new EventSource("/api/autoresearch?" + q.toString());
@@ -70,17 +72,23 @@
       if (rec.circuit_mode && el.mode) el.mode.textContent = "· " + rec.circuit_mode;
       setStatus("iteration " + rec.iter + " / " + rec.max_iters + (el.live.checked ? " · live" : ""), "running");
     };
-    // Named server-sent 'error' event (our SSE error frame carries JSON).
+    // Named server-sent 'error' event (our SSE error frame carries JSON). Runs before
+    // onerror for the same "error" event; flag it so onerror doesn't clobber the message.
     es.addEventListener("error", function (ev) {
       var payload = ev && ev.data;
-      if (payload) { try { setStatus("error: " + (JSON.parse(payload).error || payload), "error"); } catch (e) {} }
+      if (payload) {
+        try { setStatus("error: " + (JSON.parse(payload).error || payload), "error"); serverErr = true; }
+        catch (e) {}
+      }
     });
     // Transport-level error / stream close. EventSource auto-reconnects by default —
     // we must close() to stop it re-running the whole loop after the server ends the stream.
     es.onerror = function () {
       if (es) { es.close(); es = null; }
-      // a close right after the done frame is normal; only flag if nothing streamed at all
-      if (el.feed.children.length === 0) setStatus("connection error — is app_server.py running?", "error");
+      // don't overwrite a specific server error; only flag a real connection failure
+      // (nothing streamed AND no server error frame was shown this run).
+      if (!serverErr && el.feed.children.length === 0)
+        setStatus("connection error — is app_server.py running?", "error");
       reset();
     };
   }

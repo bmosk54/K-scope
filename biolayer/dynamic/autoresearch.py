@@ -139,6 +139,25 @@ def _valid_probe(probe, class_names):
             and probe.get("neg") in cset and probe.get("pos") != probe.get("neg"))
 
 
+def _fresh_probe(class_names, seen):
+    """Pick a contrast whose concept has NOT been certified yet, so the loop keeps
+    exploring instead of re-running the same axis. Anchors on TUM (the cleanest positive)
+    and walks unseen foils; if TUM is exhausted, rotates the positive; only if the whole
+    contrast space is seen does it fall back to the default opener (bounded by max_iters).
+    """
+    cset = [str(c) for c in class_names]
+    anchor = "TUM" if "TUM" in cset else cset[0]
+    order = [anchor] + [c for c in cset if c != anchor]
+    for p in order:
+        for neg in [c for c in cset if c not in (p, "BACK")]:
+            if f"{p}_vs_{neg}" not in seen:
+                return {"concept": f"{p}_vs_{neg}", "pos": p, "neg": neg,
+                        "distractor": ["STR", "MUS"],
+                        "rationale": f"unexplored foil for {p}",
+                        "proposed_by": "auto (fresh foil)"}
+    return _first_probe("", class_names, use_bedrock=False)
+
+
 def iterate(problem, track="phikon", max_iters=5, n_null=60, use_bedrock=True,
             split="train", converge_score=0.95, live=False):
     """Yield one research record per iteration of the autonomous causal loop.
@@ -200,7 +219,9 @@ def iterate(problem, track="phikon", max_iters=5, n_null=60, use_bedrock=True,
                           "rationale": nxt.get("rationale", ""),
                           "proposed_by": reflection.get("proposed_by", "reflection")}
         else:
-            next_probe = _first_probe(problem, class_names, use_bedrock=False)
+            # proposed probe was invalid or already certified — pick an unexplored
+            # contrast so we never re-run the same axis two iterations running.
+            next_probe = _fresh_probe(class_names, seen)
 
         yield {
             "iter": i + 1, "max_iters": max_iters, "problem": problem, "track": track,
