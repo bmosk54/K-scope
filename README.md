@@ -15,7 +15,8 @@ pathology foundation models.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | End-to-end architecture + document index |
 | [docs/STRATEGY.md](docs/STRATEGY.md) | Hypothesis, prior-art, feasibility, the wedge |
 | [docs/RESULTS.md](docs/RESULTS.md) | Substrate-transfer insights + measured results |
-| [docs/SETUP.md](docs/SETUP.md) | Instance transfer, HF/AWS auth, reproduce |
+| [docs/SETUP.md](docs/SETUP.md) | Instance transfer, HF/AWS auth, reproduce (team/SageMaker path) |
+| [deploy/local/README.md](deploy/local/README.md) | Run permanently on your own laptop — no AWS/SageMaker/S3 needed |
 | [docs/DESIGN_MIL_AGGREGATOR.md](docs/DESIGN_MIL_AGGREGATOR.md) | Slide-level aggregation (stretch) |
 | [deploy/sagemaker/README.md](deploy/sagemaker/README.md) | Run H-optimus-0 on SageMaker (CLI-only GPU) |
 | [CLAUDE.md](CLAUDE.md) | Scope, constraints, working style (agent context) |

@@ -217,6 +217,7 @@ Every tile is embedded at **3 depths** × **{global CLS, local mean-patch}**. Da
 | [CLAUDE.md](../CLAUDE.md) | Scope decision, hard constraints, working style (loaded into context) |
 | [STRATEGY.md](STRATEGY.md) | Hypothesis, prior-art scan, feasibility red-team, the wedge |
 | [RESULTS.md](RESULTS.md) | Substrate-transfer insights + measured readout-space battery results |
-| [SETUP.md](SETUP.md) | Instance transfer, HF/AWS auth, reproduce steps |
+| [SETUP.md](SETUP.md) | Instance transfer, HF/AWS auth, reproduce steps (team/SageMaker path) |
+| [../deploy/local/README.md](../deploy/local/README.md) | Run permanently on your own laptop — no AWS/SageMaker/S3 needed |
 | [DESIGN_MIL_AGGREGATOR.md](DESIGN_MIL_AGGREGATOR.md) | Slide-level aggregation by reusing a ViT's final block |
 | [../deploy/sagemaker/README.md](../deploy/sagemaker/README.md) | Run H-optimus-0 on SageMaker (CLI GPU) + arbitrary weight edits |

@@ -1,18 +1,36 @@
-"""Claude-on-Bedrock adapter for the agent step (answer -> atomic claims).
+"""LLM adapter for the agent step (answer -> atomic claims).
 
-Only the *decomposition* step is an LLM call; the causal certification is pure
-numpy and never touches the model (the verdict comes from the deterministic
-battery). Kept optional and degradable: if boto3 / credentials / model access are
-missing, `available()` is False (or `decompose` raises) and callers fall back to
-the keyword heuristic in claims.py — so the whole scaffold runs with or without
-Bedrock.
+Only the *decomposition* / *design* / *reflection* steps are LLM calls; the causal
+certification is pure numpy and never touches the model (the verdict comes from the
+deterministic battery). Kept optional and degradable: if the provider is unreachable
+(no key, no boto3 creds, model access missing), `available()` is False (or the call
+raises) and callers fall back to the keyword heuristic in claims.py / probe_design.py
+— so the whole scaffold runs with or without a live LLM.
 
-Auth is the SageMaker execution-role via SigV4 (no API key). We call the classic
-`bedrock-runtime` InvokeModel endpoint (the one the role is entitled to — the newer
-Mantle Messages endpoint needs a separate entitlement and 403s here), with the
-cross-region inference-profile id. Config via env:
+Two interchangeable providers, selected by `LLM_PROVIDER` (env, default "openai"):
+
+  - "openai"   -> the OpenAI API with your own API key (OPENAI_API_KEY). This is the
+                  default for a local/laptop deployment — no AWS account needed.
+                  NOTE: a ChatGPT Plus/Pro *subscription* does NOT include API access.
+                  API calls are billed separately via an API key from
+                  https://platform.openai.com/api-keys (with its own billing set up
+                  at https://platform.openai.com/account/billing).
+  - "bedrock"  -> Claude on AWS Bedrock via the SageMaker execution-role (SigV4, no
+                  API key) — the original hackathon path, kept for the team's shared
+                  AWS setup. Calls the classic `bedrock-runtime` InvokeModel endpoint
+                  with the cross-region inference-profile id.
+
+Config via env:
+    LLM_PROVIDER       "openai" (default) | "bedrock"
+    OPENAI_API_KEY     required for the openai provider
+    OPENAI_MODEL        default gpt-5.6-terra
     BEDROCK_MODEL_ID   default us.anthropic.claude-sonnet-4-6
     BEDROCK_REGION     default AWS_REGION, then us-west-2
+
+Every caller in this codebase constructs `ClaudeBedrock()` (kept as the class name
+for zero call-site churn) and only uses `.available()` / `._invoke()` / the
+higher-level `.decompose()` / `.narrate()` / `.propose_hypothesis()` methods — so
+this file is the ONLY place that needs to know which provider is behind it.
 """
 import json
 import os
@@ -21,8 +39,17 @@ import re
 # Sonnet 4.6 is fast and plenty for claim decomposition (the verdict is the
 # battery's job, not the LLM's). On-demand throughput isn't offered for the bare
 # id, so we use the cross-region inference profile (`us.` prefix).
-DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
+DEFAULT_BEDROCK_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
 ANTHROPIC_VERSION = "bedrock-2023-05-31"
+
+# Terra balances quality/cost for structured JSON tasks (decompose/design/reflect);
+# override with OPENAI_MODEL (e.g. "gpt-5.6-sol" for the flagship, "gpt-5.6-luna" for
+# the cheapest/fastest tier) if you want a different tier.
+DEFAULT_OPENAI_MODEL = "gpt-5.6-terra"
+
+
+def _provider():
+    return (os.environ.get("LLM_PROVIDER") or "openai").strip().lower()
 
 
 def _region():
@@ -30,7 +57,7 @@ def _region():
 
 
 def _model_id():
-    return os.environ.get("BEDROCK_MODEL_ID") or DEFAULT_MODEL_ID
+    return os.environ.get("BEDROCK_MODEL_ID") or DEFAULT_BEDROCK_MODEL_ID
 
 
 def _extract_json_array(text):
@@ -46,16 +73,46 @@ def _extract_json_array(text):
 
 
 class ClaudeBedrock:
-    """Thin wrapper over bedrock-runtime InvokeModel. Never raises on construct."""
+    """Thin wrapper over an LLM provider (OpenAI or Bedrock). Never raises on construct.
+
+    Kept named `ClaudeBedrock` for backward compatibility with every call site
+    (`claims.py`, `probe_design.py`, `trace.py`, `dashboard/app_server.py`) — the name
+    is now a misnomer for the default (OpenAI) path, but changing it would mean
+    touching 4+ files for no functional benefit.
+    """
 
     def __init__(self, model_id=None, region=None):
+        self.provider = _provider()
+        self._client = None      # openai.OpenAI, when provider == "openai"
+        self._rt = None          # boto3 bedrock-runtime, when provider == "bedrock"
+        self._err = None
+        if os.environ.get("BEDROCK_DISABLE") or os.environ.get("LLM_DISABLE"):
+            self._err = "LLM disabled via env"
+            return
+        if self.provider == "openai":
+            self._init_openai(model_id)
+        else:
+            self._init_bedrock(model_id, region)
+
+    def _init_openai(self, model_id):
+        self.model_id = model_id or os.environ.get("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL
+        key = os.environ.get("OPENAI_API_KEY")
+        if not key:
+            self._err = ("OPENAI_API_KEY not set — get one at "
+                         "https://platform.openai.com/api-keys (a ChatGPT Plus/Pro "
+                         "subscription does not include API access; billing for API "
+                         "usage is separate, set up at "
+                         "https://platform.openai.com/account/billing)")
+            return
+        try:
+            from openai import OpenAI
+            self._client = OpenAI(api_key=key)
+        except Exception as e:  # openai package missing / bad key format
+            self._err = repr(e)
+
+    def _init_bedrock(self, model_id, region):
         self.model_id = model_id or _model_id()
         self.region = region or _region()
-        self._rt = None
-        self._err = None
-        if os.environ.get("BEDROCK_DISABLE"):
-            self._err = "BEDROCK_DISABLE set"
-            return
         try:
             import boto3
             self._rt = boto3.client("bedrock-runtime", region_name=self.region)
@@ -63,9 +120,21 @@ class ClaudeBedrock:
             self._err = repr(e)
 
     def available(self):
-        return self._rt is not None
+        return self._client is not None or self._rt is not None
 
     def _invoke(self, system, user, max_tokens=2000):
+        if self._client is not None:
+            return self._invoke_openai(system, user, max_tokens)
+        return self._invoke_bedrock(system, user, max_tokens)
+
+    def _invoke_openai(self, system, user, max_tokens):
+        r = self._client.chat.completions.create(
+            model=self.model_id, max_completion_tokens=max_tokens,
+            messages=[{"role": "system", "content": system},
+                      {"role": "user", "content": user}])
+        return r.choices[0].message.content or ""
+
+    def _invoke_bedrock(self, system, user, max_tokens):
         body = {"anthropic_version": ANTHROPIC_VERSION, "max_tokens": max_tokens,
                 "system": system,
                 "messages": [{"role": "user", "content": user}]}

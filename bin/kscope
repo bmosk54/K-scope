@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# KScope on-demand controller — starts/stops the local backend + (optional) named
+# Cloudflare tunnel. Nothing runs in the background unless you call `start`; nothing
+# auto-starts on login. This is the "run it when I actually want to use it" model —
+# see deploy/local/README.md for the one-time setup this depends on.
+#
+#   bin/kscope start     start the backend (and the tunnel, if configured); print the URL
+#   bin/kscope stop       stop both
+#   bin/kscope restart    stop then start
+#   bin/kscope status     is it running? what URL?
+#   bin/kscope logs       tail the backend + tunnel logs
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUN_DIR="$ROOT/.kscope/run"
+mkdir -p "$RUN_DIR"
+
+BACKEND_PID="$RUN_DIR/backend.pid"
+BACKEND_LOG="$RUN_DIR/backend.log"
+TUNNEL_PID="$RUN_DIR/tunnel.pid"
+TUNNEL_LOG="$RUN_DIR/tunnel.log"
+TUNNEL_CONFIG="$HOME/.cloudflared/kscope-config.yml"
+
+# --- load local config ------------------------------------------------------
+# explicit env (e.g. `PORT=4174 bin/kscope start`) wins over .env.local's defaults —
+# capture what the caller passed BEFORE sourcing the file, then restore it after.
+_PRESET_PORT="${PORT:-}"
+_PRESET_PROVIDER="${LLM_PROVIDER:-}"
+if [ -f "$ROOT/.env.local" ]; then
+  set -a; source "$ROOT/.env.local"; set +a
+fi
+export PORT="${_PRESET_PORT:-${PORT:-4173}}"
+export LLM_PROVIDER="${_PRESET_PROVIDER:-${LLM_PROVIDER:-openai}}"
+
+# pick a python: local venv first, else whatever python3 is on PATH
+PY="$ROOT/.venv/bin/python"
+[ -x "$PY" ] || PY="$(command -v python3 || command -v python)"
+
+_pid_alive() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
+
+_backend_url() {
+  if [ -f "$RUN_DIR/hostname" ]; then
+    echo "https://$(cat "$RUN_DIR/hostname")"
+  else
+    echo "http://localhost:${PORT}"
+  fi
+}
+
+start_backend() {
+  if _pid_alive "$BACKEND_PID"; then
+    echo "backend already running (pid $(cat "$BACKEND_PID"))"
+    return 0
+  fi
+  if lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "ERROR: port ${PORT} is already in use by another process:"
+    lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN
+    echo "stop that process first, or run with a different PORT."
+    return 1
+  fi
+  echo "starting backend: $PY dashboard/app_server.py (port $PORT, provider=$LLM_PROVIDER)"
+  # no nested subshell here on purpose — `( cmd & echo $! )` can hand back the PID of
+  # an intermediate subshell rather than the final process on some shells, which then
+  # makes stop/status target the wrong PID. Background directly in THIS shell instead.
+  nohup "$PY" "$ROOT/dashboard/app_server.py" >"$BACKEND_LOG" 2>&1 &
+  echo $! >"$BACKEND_PID"
+  echo -n "waiting for it to come up"
+  for _ in $(seq 1 60); do
+    # a bare curl check alone can false-positive if some OTHER process is squatting
+    # on the port, so also confirm the PID we tracked is the one actually listening —
+    # and if it's not (PID drift), re-point the pidfile at whoever really is, so
+    # stop/status target the real process either way.
+    if ! _pid_alive "$BACKEND_PID"; then
+      echo
+      echo "ERROR: backend process died on startup — tail of $BACKEND_LOG:"
+      tail -n 20 "$BACKEND_LOG"
+      return 1
+    fi
+    if curl -sf "http://localhost:${PORT}/" >/dev/null 2>&1; then
+      real_pid="$(lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null | head -1)"
+      [ -n "$real_pid" ] && echo "$real_pid" >"$BACKEND_PID"
+      echo " up (pid $(cat "$BACKEND_PID"))."
+      return 0
+    fi
+    echo -n "."
+    sleep 1
+  done
+  echo
+  echo "WARNING: backend didn't respond within 60s — check $BACKEND_LOG"
+  return 1
+}
+
+start_tunnel() {
+  if ! command -v cloudflared >/dev/null 2>&1; then
+    echo "cloudflared not installed — serving local-only at http://localhost:${PORT}"
+    echo "  (run deploy/local/setup_cloudflare_tunnel.sh for a permanent public URL)"
+    return 0
+  fi
+  if [ ! -f "$TUNNEL_CONFIG" ]; then
+    echo "no tunnel configured yet — serving local-only at http://localhost:${PORT}"
+    echo "  (run deploy/local/setup_cloudflare_tunnel.sh once to get a permanent URL)"
+    return 0
+  fi
+  if _pid_alive "$TUNNEL_PID"; then
+    echo "tunnel already running (pid $(cat "$TUNNEL_PID"))"
+    return 0
+  fi
+  echo "starting cloudflared tunnel (config: $TUNNEL_CONFIG)"
+  nohup cloudflared tunnel --config "$TUNNEL_CONFIG" run kscope >"$TUNNEL_LOG" 2>&1 &
+  echo $! >"$TUNNEL_PID"
+  # pull the hostname straight out of the config so status/URL printing stays in sync
+  grep -oE 'hostname:\s*\S+' "$TUNNEL_CONFIG" | head -1 | awk '{print $2}' >"$RUN_DIR/hostname" || true
+  sleep 2
+}
+
+stop_one() {
+  local pidfile="$1" name="$2"
+  if _pid_alive "$pidfile"; then
+    kill "$(cat "$pidfile")" 2>/dev/null
+    rm -f "$pidfile"
+    echo "stopped $name"
+  else
+    echo "$name not running"
+    rm -f "$pidfile"
+  fi
+}
+
+stop_backend() {
+  stop_one "$BACKEND_PID" "backend"
+  # belt-and-suspenders: confirm the port actually freed up. If some other process
+  # (or a PID we lost track of) is still bound to it, kill that too.
+  sleep 1
+  local leftover
+  leftover="$(lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null | head -1)"
+  if [ -n "$leftover" ]; then
+    echo "port ${PORT} still bound (pid $leftover) — stopping it too"
+    kill "$leftover" 2>/dev/null
+    sleep 1
+    kill -9 "$leftover" 2>/dev/null
+  fi
+}
+
+cmd="${1:-status}"
+case "$cmd" in
+  start)
+    if ! start_backend; then
+      echo
+      echo "FAILED to start — see errors above."
+      exit 1
+    fi
+    start_tunnel
+    echo
+    echo "KScope is up: $(_backend_url)"
+    ;;
+  stop)
+    stop_one "$TUNNEL_PID" "tunnel"
+    stop_backend
+    rm -f "$RUN_DIR/hostname"
+    ;;
+  restart)
+    "$0" stop
+    "$0" start
+    ;;
+  status)
+    if _pid_alive "$BACKEND_PID"; then
+      echo "backend: running (pid $(cat "$BACKEND_PID"), port $PORT)"
+    else
+      echo "backend: stopped"
+    fi
+    if _pid_alive "$TUNNEL_PID"; then
+      echo "tunnel:  running (pid $(cat "$TUNNEL_PID")) -> $(_backend_url)"
+    else
+      echo "tunnel:  stopped"
+    fi
+    ;;
+  logs)
+    tail -n 40 -f "$BACKEND_LOG" "$TUNNEL_LOG" 2>/dev/null
+    ;;
+  *)
+    echo "usage: $0 {start|stop|restart|status|logs}" >&2
+    exit 1
+    ;;
+esac

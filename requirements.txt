@@ -4,6 +4,8 @@ timm
 datasets
 huggingface_hub
 boto3
+openai
+flask
 numpy
 scikit-learn
 pandas

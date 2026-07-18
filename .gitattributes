@@ -1,0 +1,5 @@
+# AWS S3 backup — large binaries via Git LFS (branch ishi-dev).
+# Free GitHub accounts include only 1 GB LFS storage; ~25 GB here needs a paid
+# LFS data pack ($5/mo for 50 GB) on github.com/settings/billing.
+
+s3_backup_bucketbiolayer/** filter=lfs diff=lfs merge=lfs -text

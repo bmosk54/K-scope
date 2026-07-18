@@ -10,6 +10,8 @@ artifacts/
 s3inline.json
 Eddie.md
 .env.aws.sh
+.env.local
+.kscope/
 
 # Home-directory files (repo lives at $HOME after unpacking owkin-hack)
 .aws/
